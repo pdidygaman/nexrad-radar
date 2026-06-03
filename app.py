@@ -1091,6 +1091,7 @@ def api_overlay_warnings():
                 'parameters': params, 'senderName': p.get('wfo', ''),
                 'areaDesc': '', 'description': '',
                 'isEmergency': p.get('is_emergency'), 'href': p.get('href'),
+                'product_id': p.get('product_id'),   # for on-demand full text
             },
         }
         prev = best.get(key)
@@ -1098,6 +1099,22 @@ def api_overlay_warnings():
             best[key] = (feat, p.get('issue', ''))
     return _json_response({'type': 'FeatureCollection',
                            'features': [v[0] for v in best.values()]})
+
+
+@app.get('/api/alert/text')
+def api_alert_text(pid: str = Query(...)):
+    """Fetch the full raw NWS product text for a warning, by IEM product_id."""
+    if not re.fullmatch(r'[0-9A-Za-z_\-]+', pid):
+        raise HTTPException(400, 'bad product id')
+    try:
+        txt = _fetch_raw(
+            f'https://mesonet.agron.iastate.edu/api/1/nwstext/{pid}', ttl=600
+        ).decode('utf-8', 'replace')
+    except Exception as e:
+        raise HTTPException(502, f'text fetch error: {e}')
+    return Response(content=txt, media_type='text/plain',
+                    headers={'Cache-Control': 'max-age=600',
+                             'Access-Control-Allow-Origin': '*'})
 
 
 # Everything (incl. marine advisories, watches, statements) for those who want it

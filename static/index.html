@@ -51,6 +51,43 @@ html,body{height:100%;width:100%;overflow:hidden;background:#000;color:#fff;
   line-height:1;padding:2px 4px;border-radius:3px;transition:color .15s}
 .upd-close:hover{color:#fff}
 
+/* ── Alerts sidebar ──────────────────────────────────────────────── */
+#alerts-sidebar{position:absolute;top:0;right:0;width:390px;max-width:90vw;height:100vh;
+  background:var(--ui-bg2);border-left:1px solid var(--ui-border);backdrop-filter:blur(14px);
+  z-index:850;display:flex;flex-direction:column;transform:translateX(102%);
+  transition:transform .25s ease;box-shadow:-8px 0 28px rgba(0,0,0,.55)}
+#alerts-sidebar.open{transform:translateX(0)}
+.as-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--ui-border);flex-shrink:0}
+.as-title{font-size:15px;font-weight:800;flex:1;letter-spacing:.3px}
+.as-count{background:var(--yellow);color:#000;font-size:11px;font-weight:800;padding:2px 9px;border-radius:10px}
+.as-hbtn{background:none;border:none;color:var(--dim);font-size:17px;cursor:pointer;line-height:1;padding:3px 6px;border-radius:5px}
+.as-hbtn:hover{color:#fff;background:rgba(255,255,255,.1)}
+.as-list{flex:1;overflow-y:auto;padding:8px;-webkit-overflow-scrolling:touch}
+.as-empty{padding:34px 16px;text-align:center;color:var(--dim);font-size:13px;line-height:1.5}
+.al-row{background:rgba(255,255,255,.04);border:1px solid var(--ui-border);border-left:4px solid #888;
+  border-radius:8px;margin-bottom:8px;overflow:hidden}
+.al-main{padding:9px 11px;cursor:pointer;transition:background .12s}
+.al-main:hover{background:rgba(255,255,255,.07)}
+.al-ev{font-size:13px;font-weight:800;color:#fff;margin-bottom:3px;line-height:1.2}
+.al-area{font-size:11px;color:rgba(255,255,255,.55);margin-bottom:6px;line-height:1.35}
+.al-tags{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:5px}
+.al-tags span{font-size:10px;font-weight:700;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);
+  padding:1px 6px;border-radius:4px;white-space:nowrap;color:#dfe}
+.al-exp{font-size:10px;color:var(--dim);font-family:var(--mono)}
+.al-foot{display:flex;gap:6px;padding:0 11px 9px}
+.al-btn{flex:1;font-size:11px;font-weight:700;padding:6px 8px;border-radius:5px;cursor:pointer;
+  border:1px solid var(--ui-border);background:rgba(255,255,255,.06);color:#cfe;transition:all .12s}
+.al-btn:hover{background:rgba(255,255,255,.14)}
+.al-btn.go{border-color:rgba(0,180,255,.45);color:#7fd4ff}
+.al-desc{display:none;padding:2px 11px 11px;border-top:1px solid var(--ui-border)}
+.al-desc.open{display:block}
+.al-desc-text{font-size:11px;color:rgba(255,255,255,.82);line-height:1.5;white-space:pre-wrap;
+  max-height:300px;overflow-y:auto;padding:9px 2px;font-family:var(--mono)}
+.al-speak{font-size:11.5px;font-weight:700;padding:6px 10px;border-radius:5px;cursor:pointer;
+  border:1px solid rgba(46,204,113,.45);background:rgba(46,204,113,.16);color:#5fe69a;width:100%;transition:all .12s}
+.al-speak:hover{background:rgba(46,204,113,.28)}
+.al-speak.speaking{background:rgba(255,80,80,.2);border-color:rgba(255,80,80,.45);color:#ff8a8a}
+
 /* ── Maps area ───────────────────────────────────────────────────── */
 #maps-area{flex:1;min-height:0;display:grid;overflow:hidden;grid-template-columns:1fr;grid-template-rows:1fr}
 #maps-area.dual{grid-template-columns:1fr 1fr}
@@ -339,12 +376,23 @@ html,body{height:100%;width:100%;overflow:hidden;background:#000;color:#fff;
     <div id="site-name">Select a site</div>
   </div>
   <div class="tb-right">
-    <div id="alerts-badge" onclick="toggleDataOverlay('warnings')">0 ALERTS</div>
+    <div id="alerts-badge" onclick="openAlertsSidebar()">0 ALERTS</div>
   </div>
 </div>
 
 <!-- MAPS -->
 <div id="maps-area"></div>
+
+<!-- ALERTS SIDEBAR -->
+<div id="alerts-sidebar">
+  <div class="as-head">
+    <span class="as-title">Active Alerts</span>
+    <span class="as-count" id="as-count">0</span>
+    <button class="as-hbtn" onclick="renderAlertsSidebar()" title="Refresh list">⟳</button>
+    <button class="as-hbtn" onclick="closeAlertsSidebar()" title="Close">✕</button>
+  </div>
+  <div class="as-list" id="as-list"></div>
+</div>
 
 <!-- DOCK -->
 <div id="dock">
@@ -1186,7 +1234,13 @@ function styleWarn(f){const ev=(f.properties||{}).event||'';const c=WARN_CLR[ev]
   // Storm-based warnings get a thick bright (cased) outline so they stay visible
   const hot=/Tornado Warning|Severe Thunderstorm Warning|Flash Flood Warning|Flash Flood Emergency|Special Marine Warning/.test(ev);
   return{color:c,weight:hot?3.5:2,fillColor:c,fillOpacity:hot?.28:.22,opacity:1};}
-function styleSpc(f){const p=f.properties||{};const lbl=(p.LABEL2||p.LABEL||'').trim();const c=SPC_CLR[lbl]||['#9aa','#777'];return{color:c[1],weight:1.5,fillColor:c[0],fillOpacity:.30};}
+function styleSpc(f){const p=f.properties||{};
+  // SPC ships fill/stroke hex right in the properties; use those, else map the
+  // SHORT code (LABEL = TSTM/MRGL/SLGT/ENH/MDT/HIGH). The bug was reading LABEL2
+  // (the long name "Marginal Risk") which never matched SPC_CLR → gray.
+  const code=(p.LABEL||'').trim().toUpperCase();const cc=SPC_CLR[code];
+  const fill=p.fill||(cc&&cc[0])||'#9aa';const stroke=p.stroke||(cc&&cc[1])||'#777';
+  return{color:stroke,weight:1.6,fillColor:fill,fillOpacity:.35};}
 // Watches: dashed, light fill, distinct from solid warnings
 const WATCH_CLR={'Tornado Watch':'#ffd000','Severe Thunderstorm Watch':'#ff8800','Flash Flood Watch':'#00cc66'};
 function styleWatch(f){const ev=(f.properties||{}).event||'';const c=WATCH_CLR[ev]||'#888';return{color:c,weight:1.5,fillColor:c,fillOpacity:.10,dashArray:'7 5',opacity:.9};}
@@ -1320,6 +1374,169 @@ function alertPopupHTML(f,idx,total){
     </div>
     ${nav}
   </div>`;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ALERTS SIDEBAR — list every warning/watch, fly-to + closest radar,
+// expandable full description, and read-aloud (TTS).
+// ════════════════════════════════════════════════════════════════════
+let _alertItems=[];
+async function openAlertsSidebar(){
+  if(!OVL_ACTIVE.has('warnings')){try{await enableOverlay('warnings');}catch(e){}}
+  document.getElementById('alerts-sidebar').classList.add('open');
+  renderAlertsSidebar();                                       // instant: warnings
+  await Promise.all([ensureOvlData('watches'),ensureOvlData('mesoscale')]);
+  if(document.getElementById('alerts-sidebar').classList.contains('open'))renderAlertsSidebar(); // add watches/MD
+}
+function closeAlertsSidebar(){document.getElementById('alerts-sidebar').classList.remove('open');stopSpeak();}
+async function ensureOvlData(id){const cfg=OVL_CFG[id];if(!cfg||!cfg.url||OVL_DATA[id])return;
+  try{const r=await fetch(cfg.url);OVL_DATA[id]=await r.json();}catch(e){}}
+
+function gatherAlerts(){
+  const out=[],seen=new Set();
+  const add=(f,kind)=>{const p=f.properties||{};
+    const k=f.id||(p.event||'')+'|'+(p.areaDesc||'')+'|'+(p.num||'')+'|'+(p.product_id||'');
+    if(seen.has(k))return;seen.add(k);out.push({f,kind});};
+  (OVL_DATA['warnings']?.features||Object.values(warnStore)).forEach(f=>add(f,'warning'));
+  (OVL_DATA['watches']?.features||[]).forEach(f=>add(f,'watch'));
+  (OVL_DATA['mesoscale']?.features||[]).forEach(f=>add(f,'md'));
+  ['allalerts','severe','tropical','flood','fire','winter','marine','heat','sps'].forEach(id=>{
+    if(OVL_ACTIVE.has(id))(OVL_DATA[id]?.features||[]).forEach(f=>add(f,'alert'));});
+  out.sort((a,b)=>{const ra=alertRank(a),rb=alertRank(b);if(ra!==rb)return ra-rb;return (alertExpiry(a.f)||9e15)-(alertExpiry(b.f)||9e15);});
+  return out;
+}
+function alertEvent(f){const p=f.properties||{};return p.event||(p.concerning?('Mesoscale Discussion #'+(p.num||'')):'Alert');}
+function alertRank(it){const ev=alertEvent(it.f);
+  const o=['Tornado Warning','Severe Thunderstorm Warning','Flash Flood Warning','Special Marine Warning','Snow Squall Warning','Extreme Wind Warning','Dust Storm Warning','Areal Flood Warning','Tornado Watch','Severe Thunderstorm Watch','Flash Flood Watch'];
+  const i=o.indexOf(ev);return i<0?(it.kind==='md'?60:40):i;}
+function alertExpiry(f){const p=f.properties||{};return Date.parse(p.expires||p.ends||p.expire||'')||0;}
+function alertColor(f){const ev=alertEvent(f);return WARN_CLR[ev]||WATCH_CLR[ev]||(ev.includes('Discussion')?'#ff7700':'#9aa');}
+
+function renderAlertsSidebar(){
+  stopSpeak();
+  _alertItems=gatherAlerts();
+  const cnt=document.getElementById('as-count');if(cnt)cnt.textContent=_alertItems.length;
+  const list=document.getElementById('as-list');if(!list)return;
+  if(!_alertItems.length){list.innerHTML='<div class="as-empty">No active warnings or watches right now.<br><br>Storm-based warnings, watches, and mesoscale discussions will appear here when issued.</div>';return;}
+  list.innerHTML=_alertItems.map((it,i)=>alertRowHTML(it,i)).join('');
+}
+function alertRowHTML(it,i){
+  const f=it.f,p=f.properties||{};const ev=alertEvent(f);const c=alertColor(f);
+  const tags=alertTags(p);const exp=p.expires||p.ends||p.expire;const area=p.areaDesc||p.concerning||'';
+  return `<div class="al-row" style="border-left-color:${c}">
+    <div class="al-main" onclick="alertGoTo(${i})">
+      <div class="al-ev">${ev}</div>
+      ${area?`<div class="al-area">${esc(area)}</div>`:''}
+      ${tags.length?`<div class="al-tags">${tags.map(t=>`<span>${t}</span>`).join('')}</div>`:''}
+      ${exp?`<div class="al-exp">⏱ until ${fmtAlertTime(exp)}</div>`:''}
+    </div>
+    <div class="al-foot">
+      <button class="al-btn go" onclick="alertGoTo(${i})">📍 Go to + radar</button>
+      <button class="al-btn" onclick="alertToggleDesc(${i},event)">📄 Details</button>
+    </div>
+    <div class="al-desc" id="aldesc${i}">
+      <div class="al-desc-text" id="aldtext${i}">Loading…</div>
+      <button class="al-speak" id="alspk${i}" onclick="alertSpeak(${i},event)">🔊 Read aloud</button>
+    </div>
+  </div>`;
+}
+function esc(s){return String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
+function alertTags(p){
+  const tags=[];
+  if(p.isEmergency)tags.push('🚨 EMERGENCY');
+  const hail=param(p,'maxHailSize'); if(hail)tags.push('🧊 '+hail+'″ hail');
+  const gust=param(p,'maxWindGust'); if(gust)tags.push('💨 '+gust);
+  const tor=param(p,'tornadoDetection'); if(tor)tags.push('🌪 '+tor);
+  const dmg=param(p,'thunderstormDamageThreat'); if(dmg)tags.push('⚠ '+dmg+' damage');
+  const ff=param(p,'flashFloodDamageThreat'); if(ff)tags.push('🌊 '+ff);
+  return tags;
+}
+function featureCentroid(f){
+  if(!f.geometry||!f.geometry.coordinates)return null;
+  let minx=180,miny=90,maxx=-180,maxy=-90,any=false;
+  const scan=c=>{if(typeof c[0]==='number'){any=true;if(c[0]<minx)minx=c[0];if(c[0]>maxx)maxx=c[0];if(c[1]<miny)miny=c[1];if(c[1]>maxy)maxy=c[1];}else c.forEach(scan);};
+  scan(f.geometry.coordinates);
+  return any?[(miny+maxy)/2,(minx+maxx)/2]:null;
+}
+function closestRadar(lat,lon){
+  let best=null,bd=Infinity;
+  for(const[icao,s] of Object.entries(allSites)){
+    if(s.dow||s.radarhub||s.lat==null)continue;
+    const dx=(s.lon-lon)*Math.cos(lat*Math.PI/180),dy=s.lat-lat;const d=dx*dx+dy*dy;
+    if(d<bd){bd=d;best=icao;}
+  }
+  return best;
+}
+function alertGoTo(i){
+  const it=_alertItems[i];if(!it)return;
+  const ctr=featureCentroid(it.f);if(!ctr){toast('No location available for this alert');return;}
+  const[lat,lon]=ctr;
+  if(!OVL_ACTIVE.has('warnings'))enableOverlay('warnings');
+  const site=closestRadar(lat,lon);
+  if(site&&site!==App.site){selectSite(site);toast(`Nearest radar: ${site}`);}
+  // center on the alert itself (after selectSite's own setView), then show its popup
+  setTimeout(()=>{const z=Math.max(maps[0]?.getZoom()||7,8);maps.forEach(m=>{try{m.setView([lat,lon],z,{animate:true,duration:.8})}catch(e){}});},140);
+  setTimeout(()=>{try{showAlertPopup(L.latLng(lat,lon),[it.f],0,App.focused||0);}catch(e){}},500);
+}
+async function alertToggleDesc(i,ev){
+  if(ev)ev.stopPropagation();
+  const d=document.getElementById('aldesc'+i);if(!d)return;
+  const opening=!d.classList.contains('open');d.classList.toggle('open',opening);
+  if(!opening)return;
+  const it=_alertItems[i],p=it.f.properties||{};const txtEl=document.getElementById('aldtext'+i);
+  if(txtEl.dataset.loaded)return;
+  let text='';
+  if(p.product_id){try{const r=await fetch('/api/alert/text?pid='+encodeURIComponent(p.product_id));if(r.ok)text=cleanNwsText(await r.text());}catch(e){}}
+  if(!text)text=(p.description||p.concerning||'').trim();
+  if(!text)text='(No detailed text is available for this alert.)';
+  txtEl.textContent=text;txtEl.dataset.loaded='1';it._text=text;
+}
+function cleanNwsText(t){
+  return (t||'').split('\n').filter(ln=>{const s=ln.trim();
+    if(!s)return true;
+    if(/^\d{3,4}$/.test(s))return false;                       // WMO seq
+    if(/^[A-Z]{4}\d{2}\s+[A-Z]{4}\s+\d{6}/.test(s))return false; // WGUS84 KCRP 031245
+    if(/^[A-Z]{4,6}$/.test(s))return false;                    // FLSCRP
+    if(/^\/[A-Z]\.[A-Z]{3}\./.test(s))return false;            // VTEC /O.EXT.KCRP...
+    if(/^\/[A-Z0-9]{3,5}\.\d\.[A-Z]{2}\./.test(s))return false;// hydro VTEC
+    if(/^[A-Z]{2}[CZ]\d{3}[->\d-]*-?$/.test(s))return false;   // UGC TXC311-040345-
+    if(/^LAT\.\.\.LON/.test(s))return false;                   // polygon coords header
+    if(/^\d{3,5}(\s+\d{3,5})+$/.test(s))return false;          // coord continuation lines
+    if(s==='&&'||s==='$$')return false;
+    return true;
+  }).join('\n').replace(/\n{3,}/g,'\n\n').trim();
+}
+// ── Text-to-speech (read aloud) ──
+let _speakingIdx=null,_ttsV=null;
+function ttsVoice(){
+  if(_ttsV)return _ttsV;
+  const vs=(window.speechSynthesis&&speechSynthesis.getVoices())||[];
+  const pref=['Natural','Online','Aria','Jenny','Guy','Google US English','Zira','David','Samantha'];
+  for(const nm of pref){const v=vs.find(v=>v.name.includes(nm)&&/^en/i.test(v.lang));if(v){_ttsV=v;return v;}}
+  _ttsV=vs.find(v=>/en-US/i.test(v.lang))||vs.find(v=>/^en/i.test(v.lang))||vs[0]||null;return _ttsV;
+}
+if('speechSynthesis' in window){try{speechSynthesis.onvoiceschanged=()=>{_ttsV=null;ttsVoice();};}catch(e){}}
+function alertSpeak(i,ev){
+  if(ev)ev.stopPropagation();
+  if(!('speechSynthesis' in window)){toast('Text-to-speech not available');return;}
+  if(_speakingIdx===i){stopSpeak();return;}
+  stopSpeak();
+  const it=_alertItems[i],p=it.f.properties||{};
+  let text=it._text||document.getElementById('aldtext'+i)?.textContent||'';
+  if(!text||text==='Loading…'){alertToggleDesc(i).then(()=>alertSpeak(i));return;}
+  const head=alertEvent(it.f)+'. '+(p.areaDesc?('For '+p.areaDesc+'. '):'');
+  const u=new SpeechSynthesisUtterance(head+text);
+  const v=ttsVoice();if(v)u.voice=v;u.rate=.98;u.pitch=1;u.volume=1;
+  u.onend=()=>{if(_speakingIdx===i)stopSpeak();};
+  u.onerror=()=>{if(_speakingIdx===i)stopSpeak();};
+  _speakingIdx=i;
+  const b=document.getElementById('alspk'+i);if(b){b.classList.add('speaking');b.textContent='⏹ Stop reading';}
+  try{speechSynthesis.cancel();speechSynthesis.speak(u);}catch(e){}
+}
+function stopSpeak(){
+  try{if(window.speechSynthesis)speechSynthesis.cancel();}catch(e){}
+  if(_speakingIdx!=null){const b=document.getElementById('alspk'+_speakingIdx);if(b){b.classList.remove('speaking');b.textContent='🔊 Read aloud';}}
+  _speakingIdx=null;
 }
 
 // — Measure —
@@ -1593,7 +1810,7 @@ async function refreshAlerts(){try{
 
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;
   if(e.key===' '){e.preventDefault();toggleAnim();}if(e.key==='ArrowLeft')stepFrame(-1);if(e.key==='ArrowRight')stepFrame(1);
-  if(e.key==='Escape'){closePicker();closeMenu();closeSearch();closeRadarPicker();if(App.tool){exitTool(App.tool);App.tool=null;}}});
+  if(e.key==='Escape'){closePicker();closeMenu();closeSearch();closeRadarPicker();closeAlertsSidebar();if(App.tool){exitTool(App.tool);App.tool=null;}}});
 document.addEventListener('click',initAudio,{once:true});
 
 // ════════════════════════════════════════════════════════════════════
