@@ -1,0 +1,107 @@
+name: Build & Release
+
+# Runs automatically when you push a version tag like: git tag v1.2.0 && git push origin v1.2.0
+# Also has a manual trigger button on the Actions tab for testing.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version override (e.g. 1.0.1) — only used for workflow_dispatch'
+        required: false
+        default: '0.0.0'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      # ── 1. Source ───────────────────────────────────────────────────
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # ── 2. Python ───────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller scipy
+
+      # ── 3. Version ──────────────────────────────────────────────────
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $v = "${{ github.event.inputs.version }}"
+          } else {
+            $v = "${{ github.ref_name }}".TrimStart("v")
+          }
+          echo "VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          # stamp version.py so the built exe knows its own version
+          "__version__ = '$v'" | Out-File -FilePath version.py -Encoding utf8NoBOM
+          Write-Output "Building version $v"
+
+      # ── 4. PyInstaller ──────────────────────────────────────────────
+      - name: Build executable
+        run: python -m PyInstaller --noconfirm --clean build.spec
+
+      - name: Verify exe was produced
+        shell: pwsh
+        run: |
+          $exe = "dist\NEXRAD Radar\NEXRAD Radar.exe"
+          if (-not (Test-Path $exe)) { throw "PyInstaller did not produce the exe" }
+          Write-Output "exe OK: $((Get-Item $exe).Length) bytes"
+
+      # ── 5. Inno Setup ───────────────────────────────────────────────
+      - name: Install Inno Setup 6
+        run: choco install innosetup --yes --no-progress --version 6.2.2
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            $iscc = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          }
+          Write-Output "ISCC: $iscc"
+          & $iscc installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+
+      # ── 6. Rename installer with version ────────────────────────────
+      - name: Rename installer
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          $src = "installer\NEXRAD-Radar-Setup.exe"
+          $dst = "installer\NEXRAD-Radar-v${v}-Setup.exe"
+          Copy-Item $src $dst
+          echo "INSTALLER=installer\NEXRAD-Radar-v${v}-Setup.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # ── 7. Create GitHub Release ─────────────────────────────────────
+      - name: Create release and upload installer
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "NEXRAD Radar v${{ steps.ver.outputs.version }}"
+          body: |
+            ## NEXRAD Radar v${{ steps.ver.outputs.version }}
+
+            ### Install / Update
+            Download **NEXRAD-Radar-v${{ steps.ver.outputs.version }}-Setup.exe** below and run it.
+            The app will notify you automatically when the next update is available.
+
+            ### Notes
+            <!-- Add change notes here when you create the release on GitHub, or edit this after the workflow runs -->
+          files: ${{ env.INSTALLER }}
+          draft: false
+          prerelease: false

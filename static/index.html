@@ -1,0 +1,1663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>NEXRAD Radar</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --ui-bg:rgba(8,12,22,.94);--ui-bg2:rgba(14,20,34,.96);
+  --ui-border:rgba(255,255,255,.1);
+  --accent:#00b4ff;--green:#00cc66;--yellow:#ffd000;--orange:#ff8a00;--red:#ff3355;
+  --dim:rgba(255,255,255,.45);--text:#fff;
+  --mono:'JetBrains Mono','Consolas',monospace;
+}
+html,body{height:100%;width:100%;overflow:hidden;background:#000;color:#fff;
+  font-family:'Segoe UI',system-ui,sans-serif;user-select:none}
+#shell{display:flex;flex-direction:column;height:100vh;width:100vw}
+
+/* ── Top bar ─────────────────────────────────────────────────────── */
+#topbar{height:48px;flex-shrink:0;background:var(--ui-bg);border-bottom:1px solid var(--ui-border);
+  backdrop-filter:blur(12px);display:flex;align-items:center;z-index:400;position:relative}
+.tb-left,.tb-right{display:flex;align-items:center;gap:2px;padding:0 8px}
+.tb-center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.25;pointer-events:none}
+.tb-ico{width:38px;height:38px;border:none;background:transparent;color:var(--dim);cursor:pointer;
+  font-size:17px;border-radius:7px;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.tb-ico:hover{color:#fff;background:rgba(255,255,255,.09)}
+#vcp-text{font-size:10px;color:var(--dim);letter-spacing:.3px}
+#site-name{font-size:18px;font-weight:800;font-family:var(--mono);letter-spacing:1px}
+#alerts-badge{padding:4px 11px;border-radius:5px;background:var(--yellow);color:#000;
+  font-size:11px;font-weight:800;letter-spacing:.4px;cursor:pointer;white-space:nowrap;display:none}
+
+/* ── Update notification bar ─────────────────────────────────────── */
+#update-bar{display:none;align-items:center;gap:10px;padding:0 14px;height:34px;flex-shrink:0;
+  background:linear-gradient(90deg,#0d2a14,#0a2010);border-bottom:1px solid #1a6b2a;
+  font-size:12px;animation:slideDown .3s ease}
+#update-bar.visible{display:flex}
+@keyframes slideDown{from{height:0;opacity:0}to{height:34px;opacity:1}}
+.upd-icon{font-size:15px}
+.upd-msg{flex:1;color:#a8ffb8;font-weight:500}
+.upd-prog{width:120px;height:6px;background:rgba(255,255,255,.12);border-radius:3px;overflow:hidden;display:none}
+.upd-prog-fill{height:100%;background:#2ecc71;border-radius:3px;transition:width .3s}
+.upd-btn{padding:4px 12px;border-radius:5px;border:1px solid #2ecc71;background:rgba(46,204,113,.15);
+  color:#2ecc71;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;transition:all .15s}
+.upd-btn:hover{background:rgba(46,204,113,.3)}
+.upd-btn.install{background:#2ecc71;color:#000;border-color:#2ecc71}
+.upd-btn.install:hover{background:#27ae60}
+.upd-close{background:none;border:none;color:rgba(255,255,255,.4);cursor:pointer;font-size:16px;
+  line-height:1;padding:2px 4px;border-radius:3px;transition:color .15s}
+.upd-close:hover{color:#fff}
+
+/* ── Maps area ───────────────────────────────────────────────────── */
+#maps-area{flex:1;min-height:0;display:grid;overflow:hidden;grid-template-columns:1fr;grid-template-rows:1fr}
+#maps-area.dual{grid-template-columns:1fr 1fr}
+#maps-area.quad{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
+
+.mp{position:relative;overflow:hidden;border-right:1px solid var(--ui-border);border-bottom:1px solid var(--ui-border)}
+.mp.focused{box-shadow:inset 0 0 0 2px var(--accent)}
+/* colorbar at top of each panel */
+.pcb{position:absolute;top:0;left:0;right:0;height:6px;z-index:65;background:#111;display:block}
+.pcb img{width:100%;height:6px;display:block}
+/* header (multi only) */
+.ph{position:absolute;top:6px;left:0;right:0;height:30px;background:rgba(6,10,18,.9);
+  border-bottom:1px solid var(--ui-border);backdrop-filter:blur(8px);
+  display:none;align-items:center;padding:0 10px;z-index:60}
+.mp.multi .ph{display:flex}
+.ph-time{font-size:11px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
+.ph-elev{font-size:11px;color:var(--dim);margin-left:12px;white-space:nowrap}
+.ph-prod{margin-left:auto;display:flex;align-items:center;gap:6px;padding:3px 10px;border-radius:5px;
+  cursor:pointer;border:1px solid var(--ui-border);background:rgba(255,255,255,.05);transition:all .15s}
+.ph-prod:hover{background:rgba(255,255,255,.13)}
+.ph-prod-name{font-size:11px;font-weight:600;white-space:nowrap;color:var(--orange)}
+.ph-caret{font-size:9px;color:var(--dim)}
+/* map div offset — z-index:1 isolates Leaflet's internal panes (z 200-700) into
+   their own stacking context so sibling overlays (.dowv) can sit above the map */
+.md{position:absolute;inset:0;top:6px;z-index:1}
+.mp.multi .md{top:36px}
+/* crosshair */
+.xh{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:70}
+.xh-h{position:absolute;top:0;left:-18px;width:36px;height:1px;background:rgba(255,255,255,.75);box-shadow:0 0 4px rgba(0,0,0,.9)}
+.xh-v{position:absolute;left:0;top:-18px;height:36px;width:1px;background:rgba(255,255,255,.75);box-shadow:0 0 4px rgba(0,0,0,.9)}
+.xh-dot{position:absolute;top:-4px;left:-4px;width:8px;height:8px;border:1.5px solid rgba(255,255,255,.9);border-radius:50%}
+/* probe bubble */
+.pb{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);background:rgba(6,10,18,.88);
+  border:1px solid rgba(255,255,255,.2);border-radius:10px;padding:2px 12px;font-family:var(--mono);
+  font-size:13px;font-weight:700;pointer-events:none;z-index:71;white-space:nowrap}
+/* draw canvas */
+.draw-cv{position:absolute;inset:0;top:6px;z-index:120;cursor:crosshair}
+.mp.multi .draw-cv{top:36px}
+/* DOW / FARM controls — slim floating bar at the top of the panel (echoes go ON the map) */
+.dowv{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:90;display:none;max-width:95%}
+.dowv.on{display:inline-block}
+.dowv-bar{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:4px 7px;background:rgba(6,10,18,.92);border:1px solid var(--ui-border);border-radius:9px;font-size:11px;box-shadow:0 3px 12px rgba(0,0,0,.55);backdrop-filter:blur(6px)}
+.dowv-bar .dw-tab{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:#cfe;border-radius:5px;padding:2px 8px;cursor:pointer;font-family:var(--mono);font-size:11px}
+.dowv-bar .dw-tab.on{background:#1d5fd6;border-color:#3b82f6;color:#fff}
+.dowv-bar .dw-lbl{font-weight:700;color:#fff;font-family:var(--mono);padding:0 4px}
+.dowv-bar .dw-info{color:var(--dim);font-family:var(--mono);font-size:10px;padding:0 4px;white-space:nowrap}
+
+/* ── Bottom dock ─────────────────────────────────────────────────── */
+#dock{height:60px;flex-shrink:0;background:var(--ui-bg);border-top:1px solid var(--ui-border);
+  backdrop-filter:blur(12px);display:flex;align-items:center;z-index:400;position:relative}
+#bl{display:flex;flex-direction:column;justify-content:center;padding:0 12px;min-width:150px;cursor:pointer;
+  border-right:1px solid var(--ui-border);height:100%;transition:background .15s}
+#bl:hover{background:rgba(255,255,255,.05)}
+#bl-frames{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700}
+#bl-frames .caret{font-size:10px;color:var(--dim)}
+#bl-time{font-size:10px;color:var(--green);font-family:var(--mono);margin-top:3px;display:flex;align-items:center;gap:5px}
+#bl-time::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--green)}
+#bl-time.hist{color:var(--orange)}
+#bl-time.hist::before{background:var(--orange)}
+
+#dock-tools{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:0 8px;overflow-x:auto}
+#dock-tools::-webkit-scrollbar{height:0}
+.tool{width:42px;height:42px;min-width:42px;border-radius:9px;border:1px solid transparent;
+  background:rgba(255,255,255,.06);color:var(--dim);font-size:17px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:all .14s;position:relative}
+.tool:hover{background:rgba(255,255,255,.13);color:#fff}
+.tool.active{background:rgba(0,180,255,.2);border-color:var(--accent);color:var(--accent)}
+.tool.on{background:rgba(255,138,0,.18);border-color:var(--orange);color:var(--orange)}
+.tool svg{width:18px;height:18px}
+.dock-sep{width:1px;height:28px;background:var(--ui-border);margin:0 4px;flex-shrink:0}
+.seg{display:flex;background:rgba(255,255,255,.06);border-radius:9px;padding:2px;gap:2px}
+.seg .tool{width:38px;height:38px;min-width:38px;border-radius:7px;background:transparent}
+.seg .tool.active{background:rgba(0,180,255,.25)}
+
+#br{display:flex;flex-direction:column;justify-content:center;align-items:flex-end;padding:0 14px;
+  min-width:170px;cursor:pointer;border-left:1px solid var(--ui-border);height:100%;transition:background .15s}
+#br:hover{background:rgba(255,255,255,.05)}
+#br-prod{font-size:13px;font-weight:700;color:var(--orange);display:flex;align-items:center;gap:6px}
+#br-prod .caret{font-size:10px;color:var(--dim)}
+#br-sub{font-size:10px;color:var(--dim);margin-top:3px;font-family:var(--mono)}
+
+/* ── Backdrops / panels ──────────────────────────────────────────── */
+.backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:800;display:none;backdrop-filter:blur(3px)}
+.backdrop.open{display:block}
+
+/* slide menu */
+#menu{position:fixed;top:0;bottom:0;left:0;width:310px;background:var(--ui-bg2);
+  border-right:1px solid var(--ui-border);backdrop-filter:blur(20px);
+  transform:translateX(-100%);transition:transform .25s ease;z-index:900;display:flex;flex-direction:column;overflow:hidden}
+#menu.open{transform:translateX(0)}
+#menu-head{height:55px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--ui-border);flex-shrink:0}
+#menu-head svg{color:var(--accent)}
+#menu-head h2{font-size:15px;font-weight:700;color:var(--accent);flex:1}
+#menu-body{flex:1;overflow-y:auto;padding:10px}
+.m-sec{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);
+  padding:12px 4px 6px;border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:6px;
+  display:flex;align-items:center;justify-content:space-between;cursor:pointer}
+.m-sec .chev{font-size:10px;transition:transform .2s}
+.m-sec.collapsed .chev{transform:rotate(-90deg)}
+.ovl-row{display:flex;align-items:center;gap:9px;padding:7px 6px;border-radius:6px;cursor:pointer;transition:background .12s}
+.ovl-row:hover{background:rgba(255,255,255,.07)}
+.ovl-chk{width:16px;height:16px;min-width:16px;border-radius:4px;border:1.5px solid rgba(255,255,255,.25);
+  background:transparent;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;transition:all .15s}
+.ovl-chk.on{background:var(--accent);border-color:var(--accent);color:#000}
+.ovl-chk.load{border-color:var(--yellow);animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ovl-name{font-size:12px;flex:1}
+.ovl-sub{font-size:10px;color:var(--dim)}
+.bmap-btn{display:block;width:100%;padding:7px 10px;border-radius:5px;border:1px solid rgba(255,255,255,.12);
+  background:transparent;color:var(--dim);font-size:11px;cursor:pointer;text-align:left;margin-bottom:3px;transition:all .15s}
+.bmap-btn:hover{border-color:rgba(255,255,255,.25);color:#fff}
+.bmap-btn.active{border-color:var(--accent);color:var(--accent);background:rgba(0,180,255,.1)}
+.sl-row{display:flex;align-items:center;gap:8px;margin:6px 4px}
+.sl-row label{font-size:11px;color:var(--dim);white-space:nowrap;min-width:60px}
+.sl-row input[type=range]{flex:1;accent-color:var(--accent)}
+.sl-row span{font-size:10px;min-width:32px;text-align:right;font-family:var(--mono)}
+
+/* product picker bottom sheet */
+#picker{position:fixed;bottom:0;left:0;right:0;max-height:80vh;background:var(--ui-bg2);
+  border-top:1px solid rgba(255,255,255,.15);backdrop-filter:blur(20px);z-index:1001;
+  transform:translateY(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;
+  border-radius:16px 16px 0 0;overflow:hidden}
+#picker.open{transform:translateY(0)}
+#pk-handle{width:38px;height:4px;background:rgba(255,255,255,.2);border-radius:2px;margin:10px auto 0;flex-shrink:0;cursor:pointer}
+#pk-head{display:flex;align-items:center;padding:10px 16px 8px;border-bottom:1px solid var(--ui-border);flex-shrink:0}
+#pk-title{font-size:15px;font-weight:700;flex:1}
+#pk-back{padding:4px 12px;border-radius:6px;border:1px solid var(--ui-border);background:transparent;color:var(--dim);
+  font-size:12px;cursor:pointer;margin-right:8px;display:none}
+#pk-back:hover{color:#fff;border-color:rgba(255,255,255,.3)}
+#pk-close{width:30px;height:30px;border-radius:7px;border:none;background:transparent;color:var(--dim);
+  font-size:18px;cursor:pointer}
+#pk-close:hover{color:#fff;background:rgba(255,255,255,.1)}
+#pk-body{flex:1;overflow-y:auto;padding:14px 16px 22px}
+.lvl-cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.lvl-card{padding:22px 16px;border-radius:11px;cursor:pointer;border:1.5px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.04);transition:all .2s;display:flex;flex-direction:column;gap:6px}
+.lvl-card:hover{border-color:var(--accent);background:rgba(0,180,255,.1)}
+.lvl-num{font-size:28px;font-weight:900;color:var(--accent)}
+.lvl-name{font-size:15px;font-weight:700}
+.lvl-desc{font-size:11px;color:var(--dim);line-height:1.45}
+.lvl-list{font-size:10px;color:var(--accent);font-family:var(--mono);margin-top:4px}
+.l2-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.l2-btn{padding:16px 8px;border-radius:9px;cursor:pointer;border:1.5px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.04);text-align:center;transition:all .2s}
+.l2-btn:hover{border-color:var(--accent);background:rgba(0,180,255,.12)}
+.l2-btn.active{border-color:var(--green);background:rgba(0,204,102,.12)}
+.l2-code{font-size:18px;font-weight:800;color:var(--accent);font-family:var(--mono)}
+.l2-name{font-size:10px;color:var(--dim);margin-top:5px;line-height:1.3}
+.cat-tabs{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px}
+.cat-tab{padding:5px 13px;border-radius:13px;font-size:11px;font-weight:600;cursor:pointer;
+  border:1px solid rgba(255,255,255,.12);background:transparent;color:var(--dim);transition:all .15s}
+.cat-tab:hover{color:#fff}
+.cat-tab.active{background:rgba(0,180,255,.18);border-color:var(--accent);color:var(--accent)}
+.prod-list{display:flex;flex-direction:column;gap:3px}
+.prod-item{display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;cursor:pointer;
+  transition:background .15s;border:1px solid transparent}
+.prod-item:hover{background:rgba(255,255,255,.07)}
+.prod-item.active{background:rgba(0,204,102,.1);border-color:rgba(0,204,102,.3)}
+.pi-code{font-size:13px;font-weight:700;color:var(--accent);font-family:var(--mono);min-width:36px}
+.pi-name{font-size:12px;flex:1}
+.pi-tilt{font-size:10px;color:var(--dim);white-space:nowrap}
+.pi-chk{font-size:14px;color:var(--green);width:18px;text-align:center}
+
+/* radar site picker */
+#radarpk{position:fixed;top:8vh;left:50%;transform:translateX(-50%) scale(.96);width:min(680px,92vw);max-height:80vh;
+  background:var(--ui-bg2);border:1px solid rgba(255,255,255,.15);border-radius:14px;backdrop-filter:blur(20px);
+  z-index:1001;display:none;flex-direction:column;overflow:hidden;opacity:0;transition:opacity .2s,transform .2s}
+#radarpk.open{display:flex;opacity:1;transform:translateX(-50%) scale(1)}
+#rpk-head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--ui-border)}
+#rpk-head h3{font-size:15px;font-weight:700;flex:1}
+#rpk-search{flex:1;max-width:280px;padding:7px 12px;background:rgba(0,0,0,.3);border:1px solid var(--ui-border);
+  border-radius:7px;color:#fff;font-size:13px;outline:none}
+#rpk-search:focus{border-color:var(--accent)}
+#rpk-body{flex:1;overflow-y:auto;padding:8px}
+.rpk-state{font-size:10px;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;
+  padding:10px 8px 4px;position:sticky;top:0;background:var(--ui-bg2)}
+.rpk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:5px;padding:0 4px}
+.rpk-site{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;cursor:pointer;transition:background .12s;border:1px solid transparent}
+.rpk-site:hover{background:rgba(0,180,255,.12);border-color:rgba(0,180,255,.3)}
+.rpk-site.active{background:rgba(0,204,102,.12);border-color:rgba(0,204,102,.4)}
+.rpk-icao{font-size:13px;font-weight:700;color:var(--accent);font-family:var(--mono);min-width:42px}
+.rpk-city{font-size:11px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* frame picker */
+#framepk{position:fixed;bottom:64px;left:8px;z-index:1001;background:var(--ui-bg2);border:1px solid var(--ui-border);
+  border-radius:10px;padding:6px;display:none;backdrop-filter:blur(16px);min-width:150px;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+#framepk.open{display:block}
+.fp-opt{padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;transition:background .12s;display:flex;align-items:center;gap:6px}
+.fp-opt:hover{background:rgba(255,255,255,.08)}
+.fp-opt.active{color:var(--accent);font-weight:700}
+.fp-chk{width:14px;color:var(--accent)}
+
+/* search overlay */
+#search-ov{position:fixed;top:55px;left:0;right:0;background:var(--ui-bg2);border-bottom:1px solid var(--ui-border);
+  backdrop-filter:blur(16px);z-index:800;display:none;max-height:60vh;flex-direction:column;overflow:hidden}
+#search-ov.open{display:flex}
+#search-inp{padding:13px 16px;background:transparent;border:none;border-bottom:1px solid var(--ui-border);
+  color:#fff;font-size:15px;outline:none;flex-shrink:0}
+#search-results{flex:1;overflow-y:auto}
+.sr-item{padding:11px 16px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05);display:flex;align-items:center;gap:10px;transition:background .1s}
+.sr-item:hover{background:rgba(255,255,255,.07)}
+.sr-icao{font-size:14px;font-weight:700;color:var(--accent);font-family:var(--mono);min-width:44px}
+.sr-name{font-size:12px}.sr-state{font-size:10px;color:var(--dim);margin-left:auto}
+
+/* tool floating panels */
+.tool-panel{position:fixed;z-index:600;background:var(--ui-bg2);border:1px solid rgba(255,255,255,.18);
+  border-radius:11px;padding:12px 14px;backdrop-filter:blur(18px);box-shadow:0 8px 32px rgba(0,0,0,.5);display:none;min-width:210px}
+.tool-panel.open{display:block}
+.tool-panel h4{font-size:12px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.tool-panel .tp-row{display:flex;align-items:center;gap:8px;margin:7px 0;font-size:12px}
+.tool-panel .tp-val{font-family:var(--mono);font-weight:700;color:var(--accent)}
+.tool-panel input[type=range]{flex:1;accent-color:var(--orange)}
+.tool-panel input[type=number]{width:60px;background:rgba(0,0,0,.3);border:1px solid var(--ui-border);
+  border-radius:5px;color:#fff;padding:4px 6px;font-size:12px;font-family:var(--mono)}
+.tp-btns{display:flex;gap:6px;margin-top:10px}
+.tp-btns button{flex:1;padding:6px;border-radius:6px;border:1px solid var(--ui-border);background:rgba(255,255,255,.06);
+  color:#fff;font-size:11px;cursor:pointer;transition:all .15s}
+.tp-btns button:hover{background:rgba(255,255,255,.14)}
+.tp-hint{font-size:10px;color:var(--dim);margin-top:8px;line-height:1.4}
+.draw-colors{display:flex;gap:5px;margin:8px 0}
+.draw-color{width:24px;height:24px;border-radius:6px;cursor:pointer;border:2px solid transparent}
+.draw-color.active{border-color:#fff}
+
+/* toast */
+#toast{position:fixed;bottom:72px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ui-bg2);
+  border:1px solid var(--ui-border);border-radius:9px;padding:9px 18px;font-size:12px;z-index:1100;
+  opacity:0;transition:all .25s;pointer-events:none;backdrop-filter:blur(14px);max-width:80vw;text-align:center}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* leaflet */
+.leaflet-tile-pane{filter:brightness(.72) saturate(.45)}
+.leaflet-control-zoom{margin:10px!important}
+.leaflet-control-zoom a{background:rgba(8,12,22,.92)!important;color:var(--accent)!important;border-color:rgba(255,255,255,.15)!important}
+.leaflet-control-zoom a:hover{background:rgba(255,255,255,.12)!important}
+.leaflet-tooltip{background:rgba(8,12,22,.92)!important;border:1px solid rgba(255,255,255,.15)!important;color:#fff!important;
+  font-size:11px!important;box-shadow:0 2px 8px rgba(0,0,0,.4)!important}
+.leaflet-popup-content-wrapper{background:rgba(8,12,22,.96)!important;border:1px solid rgba(255,255,255,.15)!important;color:#fff!important;border-radius:8px!important}
+.leaflet-popup-tip{background:rgba(8,12,22,.96)!important}
+.leaflet-popup-content{font-size:11px!important;margin:8px 12px!important}
+.alert-popup .leaflet-popup-content{margin:0!important;width:330px!important}
+.alert-popup .leaflet-popup-content-wrapper{padding:0!important;overflow:hidden}
+.ap-card{font-size:12px}
+.ap-head{padding:8px 12px;font-weight:800;font-size:13px;color:#000;text-shadow:0 1px 1px rgba(255,255,255,.25)}
+.ap-body{padding:9px 12px;max-height:300px;overflow-y:auto}
+.ap-area{font-size:11px;color:#cfe;margin-bottom:7px}
+.ap-tags{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+.ap-tags span{background:rgba(255,80,80,.18);border:1px solid rgba(255,80,80,.4);border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;white-space:nowrap}
+.ap-row{font-size:11px;margin:3px 0}.ap-row b{color:var(--accent)}
+.ap-dim{color:var(--dim);font-size:10px}
+.ap-desc{margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.12);font-size:11px;line-height:1.5;color:#dde;white-space:pre-wrap}
+.ap-nav{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:rgba(0,0,0,.35);border-top:1px solid rgba(255,255,255,.12)}
+.ap-nav span{font-size:11px;color:var(--dim)}
+.ap-nav button{width:30px;height:26px;border-radius:6px;border:1px solid var(--border2,#253047);background:rgba(255,255,255,.08);color:#fff;font-size:18px;cursor:pointer;line-height:1}
+.ap-nav button:hover{background:rgba(255,255,255,.18)}
+.site-dot{filter:drop-shadow(0 0 3px rgba(0,0,0,.9))}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:3px}
+</style>
+</head>
+<body>
+<div id="shell">
+
+<!-- UPDATE BAR (hidden until an update is found) -->
+<div id="update-bar">
+  <span class="upd-icon" id="upd-icon">🔄</span>
+  <span class="upd-msg" id="upd-msg">Update available</span>
+  <div class="upd-prog" id="upd-prog"><div class="upd-prog-fill" id="upd-fill"></div></div>
+  <button class="upd-btn" id="upd-btn" onclick="updAction()">Download</button>
+  <button class="upd-close" onclick="document.getElementById('update-bar').classList.remove('visible')" title="Dismiss">✕</button>
+</div>
+
+<!-- TOP BAR -->
+<div id="topbar">
+  <div class="tb-left">
+    <button class="tb-ico" onclick="openMenu()" title="Menu">
+      <svg width="18" height="14" viewBox="0 0 18 14" fill="currentColor"><rect width="18" height="2" rx="1"/><rect y="6" width="18" height="2" rx="1"/><rect y="12" width="18" height="2" rx="1"/></svg>
+    </button>
+    <button class="tb-ico" onclick="openSearch()" title="Search sites">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg>
+    </button>
+    <button class="tb-ico" onclick="openRadarPicker()" title="All radar sites">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+    </button>
+  </div>
+  <div class="tb-center">
+    <div id="vcp-text">NEXRAD Radar Viewer</div>
+    <div id="site-name">Select a site</div>
+  </div>
+  <div class="tb-right">
+    <div id="alerts-badge" onclick="toggleDataOverlay('warnings')">0 ALERTS</div>
+  </div>
+</div>
+
+<!-- MAPS -->
+<div id="maps-area"></div>
+
+<!-- DOCK -->
+<div id="dock">
+  <div id="bl" onclick="openFramePicker(event)">
+    <div id="bl-frames"><span id="bl-frame-txt">7 Frames</span><span class="caret">▾</span></div>
+    <div id="bl-time">--</div>
+  </div>
+
+  <div id="dock-tools">
+    <button class="tool" id="t-play" onclick="toggleAnim()" title="Play / Pause">▶</button>
+    <button class="tool" id="t-gps" onclick="gpsLocate()" title="My location (GPS)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C8 2 5 5 5 9c0 5 7 13 7 13s7-8 7-13c0-4-3-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>
+    </button>
+    <button class="tool active" id="t-probe" onclick="toggleProbeVis()" title="Probe crosshair">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v6M12 16v6M2 12h6M16 12h6"/></svg>
+    </button>
+    <div class="dock-sep"></div>
+    <div class="seg" id="mode-seg">
+      <button class="tool active" data-m="1" onclick="setMode(1)" title="Single screen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/></svg>
+      </button>
+      <button class="tool" data-m="2" onclick="setMode(2)" title="Dual screen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="16" rx="1.5"/></svg>
+      </button>
+      <button class="tool" data-m="4" onclick="setMode(4)" title="Quad screen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
+      </button>
+    </div>
+    <div class="dock-sep"></div>
+    <button class="tool" id="t-estimate" onclick="toggleTool('estimate')" title="Storm ETA estimator">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"/><path d="M12 13V8M12 13l3 2M9 2h6"/></svg>
+    </button>
+    <button class="tool" id="t-measure" onclick="toggleTool('measure')" title="Measure distance">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l5-5 13 13-5 5z"/><path d="M8 7l2 2M11 10l2 2M14 13l2 2"/></svg>
+    </button>
+    <button class="tool" id="t-draw" onclick="toggleTool('draw')" title="Freeze &amp; draw">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21l4-1 11-11-3-3L4 17z"/><path d="M14 5l3 3"/></svg>
+    </button>
+    <div class="dock-sep"></div>
+    <button class="tool" id="t-sound" onclick="toggleSound()" title="Alert sound">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>
+    </button>
+  </div>
+
+  <div id="br" onclick="openPicker(0)">
+    <div id="br-prod"><span id="br-prod-name">Select Product</span><span class="caret">▾</span></div>
+    <div id="br-sub">—</div>
+  </div>
+</div>
+</div>
+
+<!-- BACKDROPS & PANELS -->
+<div class="backdrop" id="menu-bd" onclick="closeMenu()"></div>
+<div id="menu">
+  <div id="menu-head">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>
+    <h2>NEXRAD Radar</h2>
+    <button onclick="closeMenu()" style="background:none;border:none;color:var(--dim);font-size:22px;cursor:pointer">×</button>
+  </div>
+  <div id="menu-body">
+    <div class="m-sec" onclick="toggleSec(this)">Base Map <span class="chev">▾</span></div>
+    <div class="m-grp">
+      <button class="bmap-btn" data-bm="dark" onclick="setBasemap('dark')">🌑 Dark (best for radar)</button>
+      <button class="bmap-btn active" data-bm="osm" onclick="setBasemap('osm')">🗺 OpenStreetMap (cities)</button>
+      <button class="bmap-btn" data-bm="sat" onclick="setBasemap('sat')">🛰 Satellite</button>
+      <button class="bmap-btn" data-bm="topo" onclick="setBasemap('topo')">⛰ Topographic</button>
+    </div>
+
+    <div class="m-sec" onclick="toggleSec(this)">Radar Opacity <span class="chev">▾</span></div>
+    <div class="m-grp">
+      <div class="sl-row"><label>Opacity</label><input type="range" id="opacity-sl" min="10" max="100" value="85" oninput="setOpacity(this.value)"/><span id="opacity-val">85%</span></div>
+    </div>
+
+    <div class="m-sec" onclick="toggleSec(this)">Data Overlays <span class="chev">▾</span></div>
+    <div class="m-grp" id="overlay-list"><!-- populated by JS --></div>
+  </div>
+</div>
+
+<!-- product picker -->
+<div class="backdrop" id="picker-bd" onclick="closePicker()" style="z-index:1000"></div>
+<div id="picker">
+  <div id="pk-handle" onclick="closePicker()"></div>
+  <div id="pk-head">
+    <button id="pk-back" onclick="pickerBack()">← Back</button>
+    <div id="pk-title">Select Data Level</div>
+    <button id="pk-close" onclick="closePicker()">×</button>
+  </div>
+  <div id="pk-body"></div>
+</div>
+
+<!-- radar site picker -->
+<div class="backdrop" id="radarpk-bd" onclick="closeRadarPicker()" style="z-index:1000"></div>
+<div id="radarpk">
+  <div id="rpk-head">
+    <h3>📡 Radar Sites</h3>
+    <input id="rpk-search" placeholder="Search ICAO, city, state…" oninput="renderRadarPicker(this.value)"/>
+    <button onclick="closeRadarPicker()" style="background:none;border:none;color:var(--dim);font-size:22px;cursor:pointer">×</button>
+  </div>
+  <div id="rpk-body"></div>
+</div>
+
+<!-- frame picker -->
+<div id="framepk"></div>
+
+<!-- search overlay -->
+<div id="search-ov">
+  <input id="search-inp" placeholder="Search ICAO or city name…" autocomplete="off" oninput="filterSearch(this.value)"/>
+  <div id="search-results"></div>
+</div>
+
+<!-- tool panels -->
+<div class="tool-panel" id="measure-panel">
+  <h4>📏 Measure</h4>
+  <div class="tp-row">Distance: <span class="tp-val" id="measure-dist">0 yd</span></div>
+  <div class="tp-row">Segment: <span class="tp-val" id="measure-seg">0 yd</span></div>
+  <div class="tp-hint">Click to add points. Distance shows in yards until 1 mile, then miles.</div>
+  <div class="tp-btns"><button onclick="clearMeasure()">Clear</button><button onclick="toggleTool('measure')">Done</button></div>
+</div>
+
+<div class="tool-panel" id="estimate-panel">
+  <h4>⏱ Storm ETA Estimator</h4>
+  <div class="tp-row">Speed: <input type="number" id="est-speed" value="30" min="1" max="120" oninput="updateEstimate()"/> mph</div>
+  <div class="tp-row">Distance: <span class="tp-val" id="est-dist">—</span></div>
+  <div class="tp-row">Bearing: <span class="tp-val" id="est-bearing">—</span></div>
+  <div class="tp-row">ETA: <span class="tp-val" id="est-eta">—</span></div>
+  <div class="tp-hint">Click the storm location, then the target. Set the storm speed to compute arrival time.</div>
+  <div class="tp-btns"><button onclick="clearEstimate()">Clear</button><button onclick="toggleTool('estimate')">Done</button></div>
+</div>
+
+<div class="tool-panel" id="draw-panel">
+  <h4>✏️ Draw (map frozen)</h4>
+  <div class="draw-colors" id="draw-colors"></div>
+  <div class="sl-row"><label>Width</label><input type="range" id="draw-width" min="1" max="12" value="3" style="accent-color:var(--orange)"/><span id="draw-width-val">3</span></div>
+  <div class="tp-btns"><button onclick="clearDraw()">Clear</button><button onclick="toggleTool('draw')">Done</button></div>
+</div>
+
+<!-- history panel -->
+<div class="tool-panel" id="history-panel" style="bottom:72px;left:170px">
+  <h4>🕐 NEXRAD History</h4>
+  <div class="tp-row">Date: <input type="date" id="hist-date" style="flex:1;background:rgba(0,0,0,.3);border:1px solid var(--ui-border);border-radius:5px;color:#fff;padding:4px 6px;font-size:12px"/></div>
+  <div class="tp-btns"><button onclick="loadHistory()">Load Day</button><button onclick="exitHistory()">Back to Live</button></div>
+  <div class="tp-hint">Loads archived scans for the selected date. Use the timeline / animate to replay.</div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+// ════════════════════════════════════════════════════════════════════
+const BASEMAPS={
+  dark:{url:'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',attr:'© CartoDB',maxZ:19},
+  osm:{url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',attr:'© OSM',maxZ:19},
+  sat:{url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',attr:'© Esri',maxZ:19},
+  topo:{url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',attr:'© OpenTopoMap',maxZ:17},
+};
+const SPC_CLR={TSTM:['#c1e9c1','#0a0'],MRGL:['#66C366','#050'],SLGT:['#F6F600','#990'],ENH:['#E8862B','#C60'],MDT:['#FF0000','#900'],HIGH:['#FF00FF','#909']};
+const WARN_CLR={'Tornado Warning':'#FF0000','Tornado Watch':'#FFFF00','Severe Thunderstorm Warning':'#FFA500','Severe Thunderstorm Watch':'#DAA520','Flash Flood Warning':'#00FF00','Flash Flood Watch':'#7CFC00','Flash Flood Emergency':'#FF00FF','Flood Warning':'#00FF7F','Areal Flood Warning':'#2ECC71','Flood Watch':'#2E8B57','Special Marine Warning':'#FFA500','Snow Squall Warning':'#1FB1E6','Extreme Wind Warning':'#FF1493','Dust Storm Warning':'#DAA520','Winter Storm Warning':'#FF69B4','Blizzard Warning':'#FF1493','Ice Storm Warning':'#8B008B','Winter Weather Advisory':'#7B68EE','High Wind Warning':'#DAA520','Wind Advisory':'#D2691E','Red Flag Warning':'#FF1493','Hurricane Warning':'#DC143C','Tropical Storm Warning':'#FF6347','Special Weather Statement':'#00BFFF','Heat Advisory':'#FF7F50','Excessive Heat Warning':'#C71585'};
+const DRAW_COLORS=['#ff3355','#ffd000','#00cc66','#00b4ff','#ffffff','#ff8a00','#c060ff'];
+
+// Data overlay catalog
+const OVL_CFG={
+  warnings:{label:'⚠ Storm Warnings',sub:'Tornado / Svr T-storm / Flash Flood',kind:'alerts',url:'/api/overlay/warnings'},
+  allalerts:{label:'📋 All NWS Alerts',sub:'Incl. marine, watches, advisories',kind:'alerts',url:'/api/overlay/allalerts'},
+  severe:{label:'⛈ Severe Weather',sub:'Tornado / Svr T-storm',kind:'alerts',url:'/api/overlay/alerts?cat=severe'},
+  tropical:{label:'🌀 Tropical Weather',sub:'Hurricane / Tropical',kind:'alerts',url:'/api/overlay/alerts?cat=tropical'},
+  flood:{label:'🌊 Hydrological',sub:'Flood / Flash Flood',kind:'alerts',url:'/api/overlay/alerts?cat=flood'},
+  fire:{label:'🔥 Fire Weather',sub:'Red Flag warnings',kind:'alerts',url:'/api/overlay/alerts?cat=fire'},
+  winter:{label:'❄ Winter Weather',sub:'Snow / Ice / Blizzard',kind:'alerts',url:'/api/overlay/alerts?cat=winter'},
+  marine:{label:'⚓ Marine Tools',sub:'Coastal & marine zones',kind:'alerts',url:'/api/overlay/alerts?cat=marine'},
+  heat:{label:'🌡 Heat',sub:'Heat advisories',kind:'alerts',url:'/api/overlay/alerts?cat=heat'},
+  sps:{label:'📢 Special Statements',sub:'Special weather stmts',kind:'alerts',url:'/api/overlay/sps'},
+  spccat:{label:'🌪 SPC Day 1 Categorical',sub:'Convective outlook',kind:'spc',url:'/api/overlay/spc/cat',style:'spc'},
+  spctorn:{label:'🌀 Tornado Probabilities',sub:'SPC Day 1',kind:'spc',url:'/api/overlay/spc/torn',style:'spcp'},
+  spchail:{label:'🌨 Hail Probabilities',sub:'SPC Day 1',kind:'spc',url:'/api/overlay/spc/hail',style:'spcp'},
+  spcwind:{label:'💨 Wind Probabilities',sub:'SPC Day 1',kind:'spc',url:'/api/overlay/spc/wind',style:'spcp'},
+  lsr:{label:'📍 Local Storm Reports',sub:'Last 24 h reports',kind:'lsr',url:'/api/overlay/lsr?hours=24'},
+  metar:{label:'🌬 METARs',sub:'Surface obs / wind',kind:'metar',url:'/api/overlay/metar'},
+  lightning:{label:'⚡ Lightning Detection',sub:'Blitzortung real-time',kind:'lightning'},
+  spotter:{label:'🚗 Spotter Network',sub:'Active storm spotters',kind:'spotter',url:'/api/overlay/spotter'},
+  rings:{label:'⭕ Range Rings',sub:'100/200/300/460 km',kind:'rings'},
+  counties:{label:'🗺 County Lines',kind:'wms',wms:['https://nowcoast.noaa.gov/arcgis/services/nowcoast/mapoverlays_political/MapServer/WMSServer','1',.6]},
+  history:{label:'🕐 NEXRAD History',sub:'Replay archived scans',kind:'history'},
+  watches:{label:'🟨 Watches (TOR/SVR/FF)',sub:'County-based watch areas',kind:'watches',url:'/api/overlay/watches'},
+  mesoscale:{label:'📋 Mesoscale Discussions',sub:'SPC areas of concern',kind:'mesoscale',url:'/api/overlay/mesoscale'},
+};
+// Order shown in the menu
+const OVL_ORDER=['warnings','watches','allalerts','severe','tropical','flood','fire','winter','marine','heat','mesoscale','sps','spccat','spctorn','spchail','spcwind','lsr','metar','lightning','spotter','rings','counties','history'];
+
+// ── State ──────────────────────────────────────────────────────────
+const App={
+  site:null,vcpText:'',screenMode:1,focused:0,
+  frameCount:7,animSpeed:400,isAnimating:false,animInterval:null,
+  soundEnabled:true,probeVisible:true,basemap:'osm',
+  liveInterval:null,histDate:null,tool:null,
+  panels:[
+    {product:'N0B',level:3,scanKey:null,scanList:[],animIdx:0,radarLayer:null,ts:''},
+    {product:'N0G',level:3,scanKey:null,scanList:[],animIdx:0,radarLayer:null,ts:''},
+    {product:'N0C',level:3,scanKey:null,scanList:[],animIdx:0,radarLayer:null,ts:''},
+    {product:'N0X',level:3,scanKey:null,scanList:[],animIdx:0,radarLayer:null,ts:''},
+  ],
+};
+let maps=[],baseTiles=[];
+let siteMarkerByMap=[];      // [{icao:marker}]
+let syncFlag=false,probeTimers={},probeLL={},probeMoveTs={};
+let allSites={},allProducts={},productsFlat={};
+let pickerPanel=0,pickerStep='level';
+
+// Overlay system (per-map instances)
+const OVL_ACTIVE=new Set();
+const OVL_DATA={};       // id -> geojson (cached)
+const OVL_LAYERS={};     // id -> [layer per map]
+
+// Lightning
+const Lgtn={ws:null,groups:[],strikes:[],
+  connect(){
+    if(this.ws)return;
+    const n=1+Math.floor(Math.random()*8);
+    try{
+      this.ws=new WebSocket(`wss://ws${n}.blitzortung.org/`);
+      this.ws.onmessage=e=>this.onMsg(e.data);
+      this.ws.onclose=()=>{this.ws=null;if(OVL_ACTIVE.has('lightning'))setTimeout(()=>this.connect(),7000)};
+      this.ws.onerror=()=>{};
+    }catch(e){}
+  },
+  disconnect(){if(this.ws){try{this.ws.close()}catch(e){}this.ws=null;}},
+  onMsg(data){
+    if(!OVL_ACTIVE.has('lightning'))return;
+    try{
+      const s=JSON.parse(data);let la=+s.lat,lo=+s.lon;
+      if(!isFinite(la)||!isFinite(lo))return;
+      if(Math.abs(la)>1000){la/=1e6;lo/=1e6;}
+      if(la<13||la>72||lo<-180||lo>145)return;
+      const t=performance.now();
+      this.strikes.push({la,lo,t});
+      this.groups.forEach(g=>g.addLayer(L.circleMarker([la,lo],{radius:2.2,color:'#ffd000',weight:0,fillColor:'#ffffcc',fillOpacity:1})));
+    }catch(e){}
+  },
+  rebuild(){
+    this.groups=maps.map(()=>L.layerGroup());
+    // re-add recent strikes (<12 min)
+    const now=performance.now();
+    this.strikes=this.strikes.filter(s=>now-s.t<12*60*1000);
+    this.strikes.forEach(s=>this.groups.forEach(g=>g.addLayer(L.circleMarker([s.la,s.lo],{radius:2.2,color:'#ffd000',weight:0,fillColor:'#ffffcc',fillOpacity:1}))));
+  },
+};
+
+// Audio
+let audioCtx=null;
+function initAudio(){if(!audioCtx)try{audioCtx=new AudioContext()}catch(e){}}
+function playPing(){
+  if(!App.soundEnabled)return;initAudio();if(!audioCtx)return;
+  try{const now=audioCtx.currentTime;[[880,0],[1100,.18],[880,.36]].forEach(([f,t])=>{
+    const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);
+    o.type='sine';o.frequency.value=f;g.gain.setValueAtTime(.3,now+t);
+    g.gain.exponentialRampToValueAtTime(.001,now+t+.35);o.start(now+t);o.stop(now+t+.4);});}catch(e){}
+}
+
+// ════════════════════════════════════════════════════════════════════
+// MAPS
+// ════════════════════════════════════════════════════════════════════
+function makeTile(bm){const b=BASEMAPS[bm]||BASEMAPS.osm;return L.tileLayer(b.url,{attribution:b.attr,maxZoom:b.maxZ||19});}
+
+function buildPanelDOM(i,mode){
+  const ma=document.getElementById('maps-area');
+  const panel=document.createElement('div');
+  panel.className='mp'+(mode>1?' multi':'');panel.id=`mp${i}`;
+  panel.addEventListener('mousedown',()=>setFocus(i));
+  panel.innerHTML=`
+    <div class="pcb"><img id="pcb${i}"/></div>
+    <div class="ph" id="ph${i}">
+      <span class="ph-time" id="pht${i}">--</span>
+      <span class="ph-elev" id="phe${i}"></span>
+      <div class="ph-prod" onclick="openPicker(${i})"><span class="ph-prod-name" id="php${i}">…</span><span class="ph-caret">▾</span></div>
+    </div>
+    <div class="md" id="md${i}"></div>
+    <div class="dowv" id="dowv${i}"><div class="dowv-bar" id="dowvbar${i}"></div></div>
+    <div class="xh" id="xh${i}"><div class="xh-h"></div><div class="xh-v"></div><div class="xh-dot"></div></div>
+    <div class="pb" id="pb${i}">---</div>`;
+  ma.appendChild(panel);
+}
+
+function initMaps(mode){
+  stopAnim();exitAllTools();
+  const center=maps[0]?maps[0].getCenter():[39,-97];
+  const zoom=maps[0]?maps[0].getZoom():4.5;
+  maps.forEach(m=>{try{m.remove()}catch(e){}});
+  maps=[];baseTiles=[];siteMarkerByMap=[];
+  document.getElementById('maps-area').innerHTML='';
+  document.getElementById('maps-area').className=mode===4?'quad':mode===2?'dual':'';
+
+  const n=mode===4?4:mode;
+  for(let i=0;i<n;i++){
+    buildPanelDOM(i,mode);
+    const m=L.map(`md${i}`,{center,zoom,zoomControl:(i===0),scrollWheelZoom:true,dragging:true,attributionControl:false});
+    if(i===0)m.zoomControl.setPosition('bottomright');
+    // Dedicated pane for the radar image — sits ABOVE base tiles (200) but
+    // BELOW vector overlays/warnings (overlayPane 400) and markers (600).
+    m.createPane('radarPane');m.getPane('radarPane').style.zIndex=350;m.getPane('radarPane').style.pointerEvents='none';
+    makeTile(App.basemap).addTo(m);baseTiles.push(makeTile(App.basemap));
+    // actually keep reference to the added tile:
+    baseTiles[i]=Object.values(m._layers).find(l=>l instanceof L.TileLayer);
+
+    // Keep all panels locked together. try/finally guarantees syncFlag is
+    // always cleared — otherwise one thrown setView would freeze sync forever.
+    const syncFrom=()=>{
+      if(syncFlag)return;
+      syncFlag=true;
+      try{const c=m.getCenter(),z=m.getZoom();maps.forEach((om,j)=>{if(j!==i){try{om.setView(c,z,{animate:false})}catch(e){}}});}
+      finally{syncFlag=false;}
+    };
+    m.on('move',syncFrom);
+    m.on('zoom',syncFrom);
+    m.on('moveend',()=>{syncFrom();scheduleProbe(i);});
+    m.on('click',e=>onMapClick(i,e));
+    // Probe follows the cursor: crosshair tracks the mouse and the readout
+    // shows the value of the pixel under it (throttled).
+    m.on('mousemove',e=>onProbeMove(i,e));
+    m.on('mouseout',()=>onProbeOut(i));
+    maps.push(m);
+    addSiteMarkers(i);
+    // re-add this panel's radar layer
+    const p=App.panels[i];
+    if(p.radarLayer){p.radarLayer=L.imageOverlay(p.radarLayer._url,p.radarLayer._bounds,{pane:'radarPane',opacity:getOpacity(),interactive:false});p.radarLayer.addTo(m);}
+    updatePanelHeader(i);updateColorbar(i);
+  }
+  document.getElementById('br').style.display=mode===1?'flex':'none';
+  Lgtn.rebuild();reapplyOverlays();updateXhairVis();setFocus(0);updateDowMode();
+  // Re-measure after layout settles (maps can init at 0×0 before CSS lays out)
+  setTimeout(()=>maps.forEach(m=>{try{m.invalidateSize(false)}catch(e){}}),60);
+  setTimeout(()=>maps.forEach(m=>{try{m.invalidateSize(false)}catch(e){}}),300);
+}
+// Keep maps correctly sized when the window resizes
+window.addEventListener('resize',()=>maps.forEach(m=>{try{m.invalidateSize(false)}catch(e){}}));
+
+function setMode(m){
+  if(App.screenMode===m)return;
+  App.screenMode=m;
+  document.querySelectorAll('#mode-seg .tool').forEach(b=>b.classList.toggle('active',+b.dataset.m===m));
+  initMaps(m);
+  // ensure each active panel has data
+  if(App.site)refreshAllPanels();
+}
+
+function setFocus(i){
+  App.focused=i;
+  document.querySelectorAll('.mp').forEach((p,j)=>p.classList.toggle('focused',j===i&&App.screenMode>1));
+  const pp=App.panels[i];
+  if(pp){document.getElementById('br-prod-name').textContent=(productsFlat[pp.product]||{}).name||pp.product;}
+}
+
+// ── Site markers (PER MAP — the critical fix) ──────────────────────
+function isRH(icao){return !!((allSites[icao]||{}).radarhub);}
+function siteIcon(icao,selected){
+  const s=allSites[icao]||{};const tdwr=s.tdwr,rh=s.radarhub;
+  if(selected){
+    const glow=rh?'rgba(80,255,120,.55)':tdwr?'rgba(255,100,255,.5)':'rgba(0,180,255,.4)';
+    return L.divIcon({className:'',iconSize:[50,50],iconAnchor:[25,25],
+      html:`<div style="width:50px;height:50px;background:rgba(0,0,0,.9);border:2px solid rgba(255,255,255,.4);border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:monospace;font-size:11px;font-weight:700;color:#fff;letter-spacing:.3px;box-shadow:0 0 18px rgba(0,0,0,.85),0 0 8px ${glow}">${icao}</div>`});
+  }
+  // Research (RadarHub) = lime triangle, TDWR = magenta diamond, NEXRAD = cyan dot
+  if(rh) return L.divIcon({className:'site-dot',iconSize:[14,14],iconAnchor:[7,7],
+    html:`<div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:12px solid #5dff7a;filter:drop-shadow(0 0 4px rgba(93,255,122,.8))"></div>`});
+  if(tdwr) return L.divIcon({className:'site-dot',iconSize:[12,12],iconAnchor:[6,6],
+    html:`<div style="width:9px;height:9px;background:#ff5cf0;border:2px solid #5a005a;transform:rotate(45deg);box-shadow:0 0 6px rgba(255,92,240,.6)"></div>`});
+  return L.divIcon({className:'site-dot',iconSize:[12,12],iconAnchor:[6,6],
+    html:`<div style="width:11px;height:11px;background:#00e0ff;border:2px solid #003a55;border-radius:50%;box-shadow:0 0 6px rgba(0,224,255,.6)"></div>`});
+}
+
+function addSiteMarkers(mapIdx){
+  if(!Object.keys(allSites).length)return;
+  const reg={};
+  for(const[icao,s] of Object.entries(allSites)){
+    if(s.dow||s.lat==null)continue;   // DOW/FARM radars are mobile, no fixed location → not on map
+    const sel=icao===App.site;
+    const mk=L.marker([s.lat,s.lon],{icon:siteIcon(icao,sel),zIndexOffset:sel?1000:0});
+    mk.on('click',ev=>{L.DomEvent.stop(ev);if(App.tool)return;selectSite(icao);});
+    mk.bindTooltip(`<b>${icao}</b> — ${s.name}, ${s.state}`,{direction:'top',offset:[0,-6]});
+    mk.addTo(maps[mapIdx]);
+    reg[icao]=mk;
+  }
+  siteMarkerByMap[mapIdx]=reg;
+}
+
+// Map a product to one valid for the selected radar's type (NEXRAD ↔ TDWR ↔ Research)
+function fitProduct(code,kind){ // kind: 'tdwr' | 'rh' | ''
+  const pi=productsFlat[code]||{};
+  const cat=pi.cat||'';
+  if(kind==='rh'){
+    if(pi.radarhub)return code;
+    return cat==='Velocity'?'RHV':cat==='Spectrum Width'?'RHW':cat==='Dual-Pol'?'RHD':'RHZ';
+  }
+  if(kind==='tdwr'){
+    if(pi.tdwr)return code;
+    return cat==='Velocity'?'TV0':'TZ0';
+  }
+  // NEXRAD: coming from TDWR or Research → back to sensible NEXRAD defaults
+  if(pi.tdwr||pi.radarhub)return cat==='Velocity'?'N0G':'N0B';
+  return code;
+}
+function siteKind(icao){const s=allSites[icao]||{};return s.radarhub?'rh':s.tdwr?'tdwr':'';}
+let _prevSite=null;
+function selectSite(icao){
+  const s=allSites[icao];if(!s)return;
+  const prev=App.site;App.site=icao;
+  const dow=!!s.dow;
+  // Swap products to ones the selected radar actually produces (NEXRAD / TDWR / Research)
+  if(!dow){
+    const kind=siteKind(icao);
+    App.panels.forEach((p,i)=>{const nc=fitProduct(p.product,kind);if(nc!==p.product){p.product=nc;p.scanList=[];p.scanKey=null;updatePanelHeader(i);updateColorbar(i);}});
+  }
+  // update markers on all maps (DOW radars have no marker)
+  siteMarkerByMap.forEach(reg=>{
+    if(prev&&reg[prev])reg[prev].setIcon(siteIcon(prev,false));
+    if(reg[icao]){reg[icao].setIcon(siteIcon(icao,true));reg[icao].setZIndexOffset(1000);}
+  });
+  document.getElementById('site-name').textContent=icao;
+  document.getElementById('vcp-text').textContent=dow?'FARM · DOW plot viewer':(App.vcpText||'Loading…');
+  if(!dow){
+    // Move the view — but NEVER let a view/animation hiccup block the radar load.
+    try{
+      maps.forEach(m=>{try{m.invalidateSize(false)}catch(e){}});
+      const zoom=Math.max(maps[0]?.getZoom()||5,7);
+      maps.forEach(m=>{try{m.setView([s.lat,s.lon],zoom,{animate:false})}catch(e){}});
+    }catch(e){}
+    if(OVL_ACTIVE.has('rings')){disableOverlay('rings');enableOverlay('rings');}
+  }
+  updateDowMode();
+  if(dow)flyToDOW(s.dowid);
+  refreshAllPanels();         // load radar regardless of the view change
+  closeRadarPicker();closeSearch();
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PRODUCTS / DATA
+// ════════════════════════════════════════════════════════════════════
+async function loadSites(){allSites=await(await fetch('/api/sites')).json();}
+let dowRadars=[];
+async function loadDOW(){
+  // FARM/DOW mobile radars — plot-image viewer (svr.guru), not map overlays.
+  try{
+    const d=await(await fetch('/api/dow/list')).json();
+    dowRadars=d.radars||[];
+    // key by radar NAME (DOW6/DOW7/COW2) so the picker reads naturally; keep the numeric id for the API
+    dowRadars.forEach(r=>{allSites[r.name]={name:r.name,state:'FARM',dow:true,dowid:r.id,prod:r.prod,lastPlot:r.last};});
+  }catch(e){}
+}
+function isDOW(icao){return !!((allSites[icao]||{}).dow);}
+async function loadProducts(){
+  allProducts=await(await fetch('/api/products')).json();
+  productsFlat={};
+  for(const[cat,ps] of Object.entries(allProducts))ps.forEach(p=>productsFlat[p.code]={...p,cat});
+  // Research-radar (RadarHub) moments — merged so the picker + headers know them
+  try{
+    const rh=await(await fetch('/api/radarhub/products')).json();
+    for(const[cat,ps] of Object.entries(rh)){
+      allProducts[cat]=(allProducts[cat]||[]).concat(ps);
+      ps.forEach(p=>productsFlat[p.code]={...p,cat});
+    }
+  }catch(e){}
+}
+
+function updatePanelHeader(i){
+  const p=App.panels[i],pi=productsFlat[p.product]||{};
+  const php=document.getElementById(`php${i}`);if(php)php.textContent=pi.name||p.product;
+  const phe=document.getElementById(`phe${i}`);if(phe)phe.textContent=pi.tilt?`Elev: ${pi.tilt}°`:'';
+  if(i===0){document.getElementById('br-prod-name').textContent=pi.name||p.product;
+    document.getElementById('br-sub').textContent=pi.tilt?`Elevation: ${pi.tilt}°`:(pi.unit||'—');}
+}
+function updateColorbar(i){
+  const p=App.panels[i];const img=document.getElementById(`pcb${i}`);
+  if(!img||!p.product)return;
+  const base=isRH(App.site)?'/api/radarhub/colorbar_strip':'/api/l3/colorbar_strip';
+  img.src=`${base}?product=${p.product}&width=700&height=6`;
+}
+
+async function refreshAllPanels(){const n=App.screenMode===4?4:App.screenMode;for(let i=0;i<n;i++)refreshPanel(i);}
+async function refreshPanel(i){
+  if(App.site&&isDOW(App.site))return refreshPanelDOW(i);
+  const p=App.panels[i];if(!App.site||!p.product)return;
+  if(isRH(App.site))return refreshPanelRH(i);
+  const date=App.histDate||todayStr();
+  try{
+    // Only fetch the frames the user is actually on (+1 spare), not the whole day
+    const r=await fetch(`/api/l3/scans?site=${App.site}&product=${p.product}&date=${date}&frames=${App.frameCount+1}&_=${Date.now()}`,{cache:'no-store'});
+    const d=await r.json();p.scanList=d.keys;
+    if(d.keys.length)await loadScan(i,d.keys[d.keys.length-1]);
+    else{document.getElementById(`pht${i}`).textContent='No data';if(i===0)document.getElementById('bl-time').textContent='No data';}
+  }catch(e){}
+}
+
+// ── Research radars (RadarHub) ─────────────────────────────────────
+async function refreshPanelRH(i){
+  const p=App.panels[i];
+  try{
+    const r=await fetch(`/api/radarhub/scans?site=${App.site}&product=${p.product}&frames=${App.frameCount+1}&_=${Date.now()}`,{cache:'no-store'});
+    const d=await r.json();p.scanList=d.keys||[];
+    if(p.scanList.length)await loadScanRH(i,p.scanList[p.scanList.length-1]);
+    else{const e=document.getElementById(`pht${i}`);if(e)e.textContent='No PPI data';if(i===0)document.getElementById('bl-time').textContent='No PPI scan (radar idle / doing RHIs)';}
+  }catch(e){}
+}
+async function loadScanRH(i,key){
+  if(!key)return;const p=App.panels[i];p.scanKey=key;
+  try{
+    const r=await fetch(`/api/radarhub/render?site=${App.site}&product=${p.product}&key=${encodeURIComponent(key)}&_=${Date.now()}`);
+    if(!r.ok){const e=document.getElementById(`pht${i}`);if(e)e.textContent='No data';return;}
+    const bStr=r.headers.get('X-Radar-Bounds');const mode=r.headers.get('X-Radar-Mode')||'';
+    const iso=r.headers.get('X-Radar-Time');const loc=r.headers.get('X-Radar-Loc')||'';
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    const[s,w,n,e]=bStr.split(',').map(Number);const bounds=[[s,w],[n,e]];
+    if(p.radarLayer){try{maps[i].removeLayer(p.radarLayer)}catch(e){}}
+    p.radarLayer=L.imageOverlay(url,bounds,{pane:'radarPane',opacity:getOpacity(),interactive:false});
+    if(maps[i])p.radarLayer.addTo(maps[i]);
+    if(loc)updateRHLoc(App.site,loc);   // mobile radars (RaXPol) move
+    const dt=iso?new Date(iso):null;p.scanTime=dt;const ts=dt?fmtDT(dt):'';p.ts=ts;
+    const phte=document.getElementById(`pht${i}`);if(phte)phte.textContent=ts;
+    if(i===0)updateAgeReadout();
+    if(mode&&i===0){App.vcpText=mode;document.getElementById('vcp-text').textContent=mode;}
+    updatePanelHeader(i);updateColorbar(i);scheduleProbe(i);
+  }catch(e){}
+}
+// Reposition a mobile research radar's marker + recenter once if it moved a lot
+let _rhCenteredFor=null;
+function updateRHLoc(icao,loc){
+  const[la,lo]=loc.split(',').map(Number);if(!isFinite(la)||!isFinite(lo))return;
+  const s=allSites[icao];if(!s)return;
+  const moved=Math.abs(s.lat-la)>0.02||Math.abs(s.lon-lo)>0.02;
+  if(moved){s.lat=la;s.lon=lo;
+    siteMarkerByMap.forEach(reg=>{if(reg[icao])reg[icao].setLatLng([la,lo]);});}
+  if(_rhCenteredFor!==icao){_rhCenteredFor=icao;
+    const z=Math.max(maps[0]?.getZoom()||7,8);
+    maps.forEach(m=>{try{m.setView([la,lo],z,{animate:false})}catch(e){}});}
+}
+
+async function loadScan(i,key){
+  if(isRH(App.site))return loadScanRH(i,key);
+  if(!key)return;const p=App.panels[i];p.scanKey=key;
+  try{
+    const r=await fetch(`/api/l3/render?key=${encodeURIComponent(key)}`);
+    if(!r.ok)return;
+    const bStr=r.headers.get('X-Radar-Bounds');
+    const vcpMode=r.headers.get('X-Radar-Mode')||'';
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    const[s,w,n,e]=bStr.split(',').map(Number);const bounds=[[s,w],[n,e]];
+    if(p.radarLayer){try{maps[i].removeLayer(p.radarLayer)}catch(e){}}
+    p.radarLayer=L.imageOverlay(url,bounds,{pane:'radarPane',opacity:getOpacity(),interactive:false});
+    if(maps[i])p.radarLayer.addTo(maps[i]);
+    const pt=key.split('_');let ts='';
+    if(pt.length>=8){const dt=new Date(`${pt[2]}-${pt[3]}-${pt[4]}T${pt[5]}:${pt[6]}:${pt[7]}Z`);ts=fmtDT(dt);p.scanTime=dt;}
+    p.ts=ts;
+    const phte=document.getElementById(`pht${i}`);if(phte)phte.textContent=ts;
+    if(i===0)updateAgeReadout();
+    if(vcpMode&&i===0){App.vcpText=vcpMode;document.getElementById('vcp-text').textContent=vcpMode;}
+    updatePanelHeader(i);updateColorbar(i);scheduleProbe(i);
+  }catch(e){}
+}
+
+// ── Live polling (per-product, 30 s) ───────────────────────────────
+function startLive(){if(App.liveInterval)clearInterval(App.liveInterval);App.liveInterval=setInterval(checkLive,30000);}
+async function checkLive(){
+  if(!App.site||App.isAnimating||App.histDate)return;
+  if(isDOW(App.site))return checkLiveDOW();
+  const rh=isRH(App.site);const base=rh?'/api/radarhub/latest':'/api/l3/latest';
+  const n=App.screenMode===4?4:App.screenMode;let gotNew=false;
+  for(let i=0;i<n;i++){
+    const p=App.panels[i];if(!p.product)continue;
+    try{const r=await fetch(`${base}?site=${App.site}&product=${p.product}&_=${Date.now()}`,{cache:'no-store'});if(!r.ok)continue;
+      const d=await r.json();
+      if(d.key&&d.key!==p.scanKey){if(!p.scanList.includes(d.key))p.scanList.push(d.key);await loadScan(i,d.key);gotNew=true;}
+    }catch(e){}
+  }
+  if(gotNew)playPing();
+}
+
+// ── FARM / DOW plot-image viewer (svr.guru) ────────────────────────
+function updateDowMode(){
+  const dow=isDOW(App.site);
+  const n=activePanelCount();
+  for(let i=0;i<n;i++){
+    const el=document.getElementById('dowv'+i);if(el){el.classList.toggle('on',dow);el.style.display=dow?'inline-block':'none';}
+    const p=App.panels[i];
+    if(!dow&&p&&p.dowLoop){clearInterval(p.dowLoop);p.dowLoop=null;}
+    if(dow){const cb=document.getElementById('pcb'+i);if(cb)cb.removeAttribute('src');}
+  }
+  document.querySelectorAll('.xh,.pb').forEach(el=>el.style.display=(dow||!App.probeVisible)?'none':'');
+  if(dow){const bn=document.getElementById('br-prod-name');if(bn)bn.textContent=(allSites[App.site]||{}).name||'';}
+}
+function dowTsDate(ts){return new Date(Date.UTC(+ts.slice(0,4),+ts.slice(4,6)-1,+ts.slice(6,8),+ts.slice(8,10),+ts.slice(10,12),+ts.slice(12,14)));}
+function fmtDowTs(ts){try{return fmtDT(dowTsDate(ts));}catch(e){return ts;}}
+function dowProdLabel(c){const f=c.endsWith('_F')?'ᶠ':'';const b=c.replace('_F','');return ({DBZHC:'Z',DBZ:'Z',VEL:'V',ZDR:'ZDR',RHOHV:'CC',KDP:'KDP',WIDTH:'SW',SW:'SW'}[b]||b)+f;}
+async function refreshPanelDOW(i){
+  const s=allSites[App.site];if(!s||!s.dow)return;
+  const p=App.panels[i];
+  const prod=p.dowProd||s.prod||'DBZHC';
+  try{
+    const r=await fetch(`/api/dow/frames?id=${s.dowid}&prod=${encodeURIComponent(prod)}&scan=PPI&_=${Date.now()}`,{cache:'no-store'});
+    const d=await r.json();
+    p.dowFrames=d.frames||[];p.dowProducts=d.products||[];p.dowProd=prod;p.dowName=d.name||s.name;
+    renderDowBar(i);
+    if(p.dowFrames.length){await showDowFrame(i,p.dowFrames.length-1);}
+    else showDowEmpty(i);
+  }catch(e){showDowEmpty(i);}
+}
+// Load one DOW frame as a GEOREFERENCED echo overlay on the map (radarPane).
+async function showDowFrame(i,idx){
+  const p=App.panels[i],s=allSites[App.site];if(!s||!p.dowFrames||!p.dowFrames[idx])return;
+  p.dowIdx=idx;const fr=p.dowFrames[idx];p.scanKey=fr.path;
+  try{
+    const r=await fetch(`/api/dow/overlay?id=${s.dowid}&p=${encodeURIComponent(fr.path)}`);
+    if(!r.ok){setDowInfo(i,'echo unavailable');return;}
+    const bStr=r.headers.get('X-Radar-Bounds');const iso=r.headers.get('X-Radar-Time');
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    const[so,we,no,ea]=bStr.split(',').map(Number);const bounds=[[so,we],[no,ea]];
+    if(p.radarLayer){try{maps[i].removeLayer(p.radarLayer)}catch(e){}}
+    p.radarLayer=L.imageOverlay(url,bounds,{pane:'radarPane',opacity:getOpacity(),interactive:false});
+    if(maps[i])p.radarLayer.addTo(maps[i]);
+    p.scanTime=iso?new Date(iso):dowTsDate(fr.ts);
+    setDowInfo(i,`${fmtDowTs(fr.ts)} · ${idx+1}/${p.dowFrames.length}`);
+    if(i===App.focused){const t=document.getElementById('pht'+i);if(t)t.textContent=fmtDowTs(fr.ts);
+      const bl=document.getElementById('bl-time');if(bl)bl.textContent=`◷ ${idx+1}/${p.dowFrames.length}`;updateAgeReadout();}
+  }catch(e){}
+}
+function setDowInfo(i,txt){const el=document.getElementById('dowinfo'+i);if(el)el.textContent=txt;}
+function showDowEmpty(i){
+  const p=App.panels[i];if(p.radarLayer){try{maps[i].removeLayer(p.radarLayer)}catch(e){}p.radarLayer=null;}
+  p.dowFrames=[];renderDowBar(i);setDowInfo(i,'no PPI — radar idle / doing RHIs');
+  if(i===App.focused){const bl=document.getElementById('bl-time');if(bl)bl.textContent='No DOW PPI data';}
+}
+function renderDowBar(i){
+  const p=App.panels[i],s=allSites[App.site]||{};const bar=document.getElementById('dowvbar'+i);if(!bar)return;
+  let h=`<span class="dw-lbl">${p.dowName||s.name||''}</span>`;
+  (p.dowProducts||[]).forEach(pr=>{h+=`<span class="dw-tab${pr.code===p.dowProd?' on':''}" onclick="dowSetProd(${i},'${pr.code}')" title="${pr.name}">${dowProdLabel(pr.code)}</span>`;});
+  h+=`<span class="dw-tab" onclick="dowStep(${i},-1)" title="Previous frame">‹</span><span class="dw-tab" id="dowloopbtn${i}" onclick="dowToggleLoop(${i})" title="Loop frames">▶</span><span class="dw-tab" onclick="dowStep(${i},1)" title="Next frame">›</span>`;
+  h+=`<span class="dw-info" id="dowinfo${i}"></span>`;
+  bar.innerHTML=h;
+}
+function dowSetProd(i,code){const p=App.panels[i];if(p.dowProd===code)return;dowStopLoop(i);p.dowProd=code;refreshPanelDOW(i);}
+function dowStep(i,dir){const p=App.panels[i];if(!p.dowFrames||!p.dowFrames.length)return;dowStopLoop(i);let n=(p.dowIdx||0)+dir;if(n<0)n=p.dowFrames.length-1;if(n>=p.dowFrames.length)n=0;showDowFrame(i,n);}
+function dowStopLoop(i){const p=App.panels[i];if(p.dowLoop){clearInterval(p.dowLoop);p.dowLoop=null;const b=document.getElementById('dowloopbtn'+i);if(b)b.textContent='▶';}}
+function dowToggleLoop(i){
+  const p=App.panels[i];
+  if(p.dowLoop){dowStopLoop(i);return;}
+  if(!p.dowFrames||p.dowFrames.length<2)return;
+  const b=document.getElementById('dowloopbtn'+i);if(b)b.textContent='⏸';
+  let busy=false;
+  p.dowLoop=setInterval(async()=>{if(busy)return;busy=true;let n=(p.dowIdx||0)+1;if(n>=p.dowFrames.length)n=0;await showDowFrame(i,n);busy=false;},Math.max(App.animSpeed,550));
+}
+async function flyToDOW(id){
+  // Navigate map to the DOW's current deployment location derived from the plot image.
+  try{
+    const r=await fetch(`/api/dow/location?id=${id}`);
+    if(!r.ok)return;
+    const d=await r.json();
+    if(!d.lat||!d.lon)return;
+    const zoom=Math.max(maps[0]?.getZoom()||6,8);
+    maps.forEach(m=>{try{m.setView([d.lat,d.lon],zoom,{animate:true,duration:1.2})}catch(e){}});
+    const conf=d.n?` (from ${d.n} town label${d.n>1?'s':''})`:'';
+    toast(`📍 ${allSites[App.site]?.name||App.site} located near ${d.lat.toFixed(2)}°N ${Math.abs(d.lon).toFixed(2)}°W${conf}`);
+  }catch(e){
+    // can't determine location — zoom to central US and let user see the plot
+    maps.forEach(m=>{try{m.setView([37,-100],5,{animate:true})}catch(e){}});
+    toast('🛻 Mobile radar — location shown in plot image');
+  }
+}
+async function checkLiveDOW(){
+  const n=activePanelCount();let got=false;
+  for(let i=0;i<n;i++){
+    const p=App.panels[i],s=allSites[App.site];if(!s||p.dowLoop)continue;
+    const wasLast=!p.dowFrames||!p.dowFrames.length||(p.dowIdx>=p.dowFrames.length-1);
+    const prevTs=(p.dowFrames&&p.dowFrames.length)?p.dowFrames[p.dowFrames.length-1].ts:null;
+    try{
+      const r=await fetch(`/api/dow/frames?id=${s.dowid}&prod=${encodeURIComponent(p.dowProd||s.prod)}&scan=${p.dowScan||'PPI'}&_=${Date.now()}`,{cache:'no-store'});
+      const d=await r.json();
+      const newTs=(d.frames&&d.frames.length)?d.frames[d.frames.length-1].ts:null;
+      if(newTs&&newTs!==prevTs){p.dowFrames=d.frames;p.dowProducts=d.products;renderDowBar(i);if(wasLast){showDowFrame(i,d.frames.length-1);got=true;}}
+    }catch(e){}
+  }
+  if(got)playPing();
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ANIMATION
+// ════════════════════════════════════════════════════════════════════
+function keyTime(key){
+  // RadarHub key: YYYYMMDD-HHMMSS-E#.#   (no underscores)
+  if(key&&key.indexOf('_')<0&&/^\d{8}-\d{6}-/.test(key)){
+    const d=key.slice(0,8),t=key.slice(9,15);
+    return Date.parse(`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}T${t.slice(0,2)}:${t.slice(2,4)}:${t.slice(4,6)}Z`);
+  }
+  const p=(key||'').split('_');if(p.length<8)return 0;return Date.parse(`${p[2]}-${p[3]}-${p[4]}T${p[5]}:${p[6]}:${p[7]}Z`);}
+function closestKey(list,targetMs){let best=null,bd=Infinity;for(const k of list){const d=Math.abs(keyTime(k)-targetMs);if(d<bd){bd=d;best=k;}}return best;}
+function activePanelCount(){return App.screenMode===4?4:App.screenMode;}
+
+function toggleAnim(){if(isDOW(App.site)){const n=activePanelCount();for(let i=0;i<n;i++)dowToggleLoop(i);return;}App.isAnimating?stopAnim():startAnim();}
+function startAnim(){
+  // Reference timeline = the focused panel's recent frames (fallback: first panel with data)
+  let ref=App.panels[App.focused];
+  if(!ref||!ref.scanList.length){ref=App.panels.find(p=>p.scanList&&p.scanList.length);}
+  if(!ref||!ref.scanList.length){toast('No scans to animate');return;}
+  const refFrames=ref.scanList.slice(-App.frameCount);
+  App.isAnimating=true;document.getElementById('t-play').classList.add('active');document.getElementById('t-play').textContent='⏸';
+  const n=activePanelCount();
+  let idx=0;
+  const step=async()=>{
+    if(!App.isAnimating)return;
+    const targetMs=keyTime(refFrames[idx%refFrames.length]);
+    // Load every panel's scan CLOSEST IN TIME to the target, and wait for all
+    // so they swap together (true sync, not index-by-index drift).
+    await Promise.all(Array.from({length:n},(_,i)=>{
+      const pp=App.panels[i];
+      if(!pp||!pp.scanList.length)return Promise.resolve();
+      const k=closestKey(pp.scanList,targetMs);
+      return k?loadScan(i,k):Promise.resolve();
+    }));
+    document.getElementById('bl-time').textContent=`◷ Frame ${(idx%refFrames.length)+1}/${refFrames.length}`;
+    document.getElementById('bl-time').classList.remove('hist');
+    if(!App.isAnimating)return;
+    idx++;App.animInterval=setTimeout(step,App.animSpeed);
+  };step();
+}
+function stopAnim(){App.isAnimating=false;if(App.animInterval){clearTimeout(App.animInterval);App.animInterval=null;}
+  const b=document.getElementById('t-play');if(b){b.classList.remove('active');b.textContent='▶';}
+  updateAgeReadout();}
+function stepFrame(dir){
+  stopAnim();
+  let ref=App.panels[App.focused];
+  if(!ref||!ref.scanList.length){ref=App.panels.find(p=>p.scanList&&p.scanList.length);}
+  if(!ref||!ref.scanList.length)return;
+  let ci=ref.scanList.indexOf(ref.scanKey);if(ci===-1)ci=ref.scanList.length-1;
+  ci=Math.max(0,Math.min(ref.scanList.length-1,ci+dir));
+  const targetMs=keyTime(ref.scanList[ci]);
+  const n=activePanelCount();
+  for(let i=0;i<n;i++){const pp=App.panels[i];if(pp&&pp.scanList.length){const k=closestKey(pp.scanList,targetMs);if(k)loadScan(i,k);}}
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PROBE
+// ════════════════════════════════════════════════════════════════════
+function scheduleProbe(i){clearTimeout(probeTimers[i]);probeTimers[i]=setTimeout(()=>doProbe(i),130);}
+// Crosshair tracks the cursor; readout shows the value under it (throttled fetch)
+function onProbeMove(i,e){
+  if(App.tool||!App.probeVisible)return;            // active tools own the cursor
+  const md=document.getElementById('md'+i),xh=document.getElementById('xh'+i);
+  if(xh&&md){xh.style.left=e.containerPoint.x+'px';xh.style.top=(md.offsetTop+e.containerPoint.y)+'px';}
+  probeLL[i]=e.latlng;
+  const now=Date.now();
+  if(!probeMoveTs[i]||now-probeMoveTs[i]>80){probeMoveTs[i]=now;doProbe(i);}
+  else scheduleProbe(i);
+}
+function onProbeOut(i){
+  probeLL[i]=null;
+  const xh=document.getElementById('xh'+i);if(xh){xh.style.left='50%';xh.style.top='50%';}
+  scheduleProbe(i);                                  // fall back to map-center value
+}
+async function doProbe(i){
+  const p=App.panels[i];if(!p.scanKey||!maps[i]||!App.probeVisible)return;
+  const ll=probeLL[i]||maps[i].getCenter();
+  const lat=ll.lat,lon=ll.lng;
+  const url=isRH(App.site)
+    ?`/api/radarhub/probe?site=${App.site}&product=${p.product}&key=${encodeURIComponent(p.scanKey)}&lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}`
+    :`/api/l3/probe?key=${encodeURIComponent(p.scanKey)}&lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}`;
+  try{const r=await fetch(url);
+    const d=await r.json();const b=document.getElementById(`pb${i}`);
+    const u=d.unit?` ${d.unit}`:'';if(b)b.textContent=d.value!==null?`${d.display}${u}`:d.display;
+  }catch(e){}
+}
+function toggleProbeVis(){App.probeVisible=!App.probeVisible;document.getElementById('t-probe').classList.toggle('active',App.probeVisible);updateXhairVis();}
+function updateXhairVis(){const hide=!App.probeVisible||isDOW(App.site);document.querySelectorAll('.xh,.pb').forEach(el=>el.style.display=hide?'none':'');}
+
+// ════════════════════════════════════════════════════════════════════
+// OVERLAYS (per-map instances)
+// ════════════════════════════════════════════════════════════════════
+function setOvlUI(id,state){ // state: 'on'|'off'|'load'
+  const chk=document.getElementById(`chk-${id}`);
+  if(chk){chk.classList.toggle('on',state==='on');chk.classList.toggle('load',state==='load');chk.textContent=state==='on'?'✓':'';}
+}
+
+async function toggleDataOverlay(id){
+  const cfg=OVL_CFG[id];if(!cfg)return;
+  if(cfg.kind==='todo'){toast(`${cfg.label}: no public data feed available`);return;}
+  if(cfg.kind==='history'){openHistory();return;}
+  if(OVL_ACTIVE.has(id))disableOverlay(id);else await enableOverlay(id);
+}
+
+async function enableOverlay(id){
+  const cfg=OVL_CFG[id];
+  setOvlUI(id,'load');
+  try{
+    if(cfg.url&&!OVL_DATA[id]){
+      const r=await fetch(cfg.url);if(!r.ok)throw new Error('HTTP '+r.status);OVL_DATA[id]=await r.json();
+    }
+    OVL_ACTIVE.add(id);
+    OVL_LAYERS[id]=[];
+    maps.forEach((m,i)=>{const l=buildOverlayLayer(id,i);if(l){l.addTo(m);OVL_LAYERS[id].push(l);}});
+    if(id==='lightning'){Lgtn.connect();maps.forEach((m,i)=>Lgtn.groups[i]&&Lgtn.groups[i].addTo(m));}
+    setOvlUI(id,'on');
+  }catch(e){toast(`Couldn't load ${cfg.label}`);OVL_ACTIVE.delete(id);setOvlUI(id,'off');}
+}
+
+function disableOverlay(id){
+  OVL_ACTIVE.delete(id);setOvlUI(id,'off');
+  (OVL_LAYERS[id]||[]).forEach(l=>maps.forEach(m=>{try{m.removeLayer(l)}catch(e){}}));
+  OVL_LAYERS[id]=[];
+  if(id==='lightning'){Lgtn.disconnect();Lgtn.groups.forEach(g=>g.clearLayers());}
+}
+
+function reapplyOverlays(){
+  OVL_ACTIVE.forEach(id=>{
+    if(id==='lightning')return; // handled via Lgtn.rebuild+groups
+    OVL_LAYERS[id]=[];
+    maps.forEach((m,i)=>{const l=buildOverlayLayer(id,i);if(l){l.addTo(m);OVL_LAYERS[id].push(l);}});
+  });
+  if(OVL_ACTIVE.has('lightning'))maps.forEach((m,i)=>Lgtn.groups[i]&&Lgtn.groups[i].addTo(m));
+}
+
+// Warning polygons with a dark "casing" behind the colored outline, so they
+// stay visible over any radar color (e.g. green flash-flood box over green echo).
+function casedGeoJSON(data,styleFn){
+  const g=L.layerGroup();
+  g.addLayer(L.geoJSON(data,{style:f=>{const s=styleFn(f);return{color:'#000',weight:(s.weight||2)+3,opacity:.55,fill:false,interactive:false};}}));
+  g.addLayer(L.geoJSON(data,{style:styleFn,onEachFeature:bindAlert}));
+  return g;
+}
+function buildOverlayLayer(id){
+  const cfg=OVL_CFG[id];
+  if(cfg.kind==='alerts')return casedGeoJSON(OVL_DATA[id],styleWarn);
+  if(cfg.kind==='watches')return L.geoJSON(OVL_DATA[id],{style:styleWatch,onEachFeature:bindAlert});
+  if(cfg.kind==='mesoscale')return L.geoJSON(OVL_DATA[id],{style:styleMD,onEachFeature:bindMD});
+  if(cfg.kind==='spc')return L.geoJSON(OVL_DATA[id],{style:cfg.style==='spcp'?styleSpcP:styleSpc,onEachFeature:bindAlert});
+  if(cfg.kind==='lsr')return lsrLayer(OVL_DATA[id]);
+  if(cfg.kind==='metar')return metarLayer(OVL_DATA[id]);
+  if(cfg.kind==='spotter')return spotterLayer(OVL_DATA[id]);
+  if(cfg.kind==='rings')return ringsLayer();
+  if(cfg.kind==='wms')return L.tileLayer.wms(cfg.wms[0],{layers:cfg.wms[1],format:'image/png',transparent:true,opacity:cfg.wms[2]});
+  return null;
+}
+
+function bindAlert(f,l){const p=f.properties||{};const ev=p.event||p.LABEL2||p.LABEL||'';const ar=p.areaDesc||'';l.bindTooltip(`<b>${ev}</b>${ar?'<br>'+ar:''}`,{sticky:true});}
+function styleWarn(f){const ev=(f.properties||{}).event||'';const c=WARN_CLR[ev]||'#9aa';
+  // Storm-based warnings get a thick bright (cased) outline so they stay visible
+  const hot=/Tornado Warning|Severe Thunderstorm Warning|Flash Flood Warning|Flash Flood Emergency|Special Marine Warning/.test(ev);
+  return{color:c,weight:hot?3.5:2,fillColor:c,fillOpacity:hot?.28:.22,opacity:1};}
+function styleSpc(f){const p=f.properties||{};const lbl=(p.LABEL2||p.LABEL||'').trim();const c=SPC_CLR[lbl]||['#9aa','#777'];return{color:c[1],weight:1.5,fillColor:c[0],fillOpacity:.30};}
+// Watches: dashed, light fill, distinct from solid warnings
+const WATCH_CLR={'Tornado Watch':'#ffd000','Severe Thunderstorm Watch':'#ff8800','Flash Flood Watch':'#00cc66'};
+function styleWatch(f){const ev=(f.properties||{}).event||'';const c=WATCH_CLR[ev]||'#888';return{color:c,weight:1.5,fillColor:c,fillOpacity:.10,dashArray:'7 5',opacity:.9};}
+// SPC Mesoscale Discussions
+function styleMD(f){return{color:'#ff5500',weight:2,fillColor:'#ff7700',fillOpacity:.07,dashArray:'9 5'};}
+function bindMD(f,l){const p=f.properties||{};l.bindTooltip(`<b>SPC Mesoscale Discussion #${p.num||p.product_num||''}</b>${p.concerning?'<br>'+p.concerning:''}`,{sticky:true});}
+function styleSpcP(f){const p=f.properties||{};const fl=p.fill||p.FILL||'#9aa';const st=p.stroke||p.STROKE||fl;return{color:st,weight:1,fillColor:fl,fillOpacity:.32};}
+
+const LSR_CLR={T:'#ff3355',H:'#00b4ff',G:'#ffd000',D:'#ff8a00',W:'#c060ff',F:'#00cc66'};
+function lsrLayer(gj){
+  return L.geoJSON(gj,{pointToLayer:(f,ll)=>{
+    const ty=(f.properties.type||'')[0]||'O';
+    const c=LSR_CLR[ty]||'#fff';
+    return L.circleMarker(ll,{radius:4,color:'#000',weight:1,fillColor:c,fillOpacity:.95});
+  },onEachFeature:(f,l)=>{const p=f.properties||{};l.bindTooltip(`<b>${p.typetext||'Report'}</b><br>${p.city||''} ${p.county||''}, ${p.state||''}${p.magnitude?'<br>'+p.magnitude:''}`,{sticky:true});}});
+}
+function metarLayer(gj){
+  const g=L.layerGroup();
+  (gj.features||[]).forEach(f=>{const p=f.properties||{};const c=f.geometry&&f.geometry.coordinates;if(!c)return;
+    const wdir=p.wdir||0,wspd=p.wspd||0;
+    const ic=L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],
+      html:`<div style="position:relative;width:24px;height:24px"><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:5px;height:5px;background:#00d0ff;border:1px solid #fff;border-radius:50%"></div><div style="position:absolute;top:50%;left:50%;transform-origin:bottom center;transform:rotate(${wdir}deg) translateX(-50%);width:1px;height:${Math.min(wspd/4+4,16)}px;background:rgba(255,255,255,.8)"></div></div>`});
+    const m=L.marker([c[1],c[0]],{icon:ic});m.bindTooltip(`${(p.rawOb||'').split(' ').slice(0,9).join(' ')}`,{sticky:true});g.addLayer(m);});
+  return g;
+}
+function spotterLayer(gj){
+  return L.geoJSON(gj,{pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:3.5,color:'#003a55',weight:1,fillColor:'#00e0ff',fillOpacity:.9}),
+    onEachFeature:(f,l)=>{l.bindTooltip(f.properties.label||'Spotter',{sticky:true});}});
+}
+function ringsLayer(){
+  const s=App.site?allSites[App.site]:null;if(!s)return null;const g=L.layerGroup();
+  [100,200,300,460].forEach(km=>g.addLayer(L.circle([s.lat,s.lon],{radius:km*1000,color:'rgba(200,220,255,.35)',weight:1,fillOpacity:0,dashArray:'5 5'})));
+  return g;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TOOLS: measure / estimate / draw
+// ════════════════════════════════════════════════════════════════════
+let measure={pts:[],line:null,markers:[],map:null};
+let estimate={a:null,b:null,line:null,markers:[],map:null};
+let draw={cv:null,ctx:null,active:false,color:DRAW_COLORS[0],width:3,map:null,last:null};
+
+function toggleTool(name){
+  if(App.tool===name){exitTool(name);App.tool=null;return;}
+  if(App.tool)exitTool(App.tool);
+  App.tool=name;
+  document.getElementById(`t-${name}`).classList.add('active');
+  if(name==='measure')startMeasure();
+  if(name==='estimate')startEstimate();
+  if(name==='draw')startDraw();
+}
+function exitTool(name){
+  const b=document.getElementById(`t-${name}`);if(b)b.classList.remove('active');
+  if(name==='measure')endMeasure();
+  if(name==='estimate')endEstimate();
+  if(name==='draw')endDraw();
+}
+function exitAllTools(){if(App.tool){exitTool(App.tool);App.tool=null;}
+  ['measure-panel','estimate-panel','draw-panel'].forEach(id=>document.getElementById(id).classList.remove('open'));}
+
+function onMapClick(i,e){
+  if(App.tool==='measure'&&i===App.focused){measureClick(e.latlng);return;}
+  if(App.tool==='estimate'&&i===App.focused){estimateClick(e.latlng);return;}
+  if(!App.tool)checkAlertClick(e.latlng,i);
+}
+
+// ── Click a warning/watch/MD → details popup with tags + multi-alert nav ──
+function pointInRing(pt,ring){
+  // pt=[lng,lat]; ray casting
+  let inside=false;
+  for(let a=0,b=ring.length-1;a<ring.length;b=a++){
+    const xi=ring[a][0],yi=ring[a][1],xj=ring[b][0],yj=ring[b][1];
+    if(((yi>pt[1])!==(yj>pt[1]))&&(pt[0]<(xj-xi)*(pt[1]-yi)/(yj-yi)+xi))inside=!inside;
+  }
+  return inside;
+}
+function pointInFeature(latlng,f){
+  const g=f.geometry;if(!g)return false;const pt=[latlng.lng,latlng.lat];
+  const polys=g.type==='Polygon'?[g.coordinates]:g.type==='MultiPolygon'?g.coordinates:[];
+  for(const poly of polys){if(poly.length&&pointInRing(pt,poly[0])){
+    let hole=false;for(let h=1;h<poly.length;h++)if(pointInRing(pt,poly[h]))hole=true;
+    if(!hole)return true;
+  }}
+  return false;
+}
+const ALERT_OVLS=['warnings','watches','allalerts','severe','tropical','flood','fire','winter','marine','heat','sps','mesoscale'];
+function checkAlertClick(latlng,mapIdx){
+  const hits=[];const seen=new Set();
+  ALERT_OVLS.forEach(id=>{if(!OVL_ACTIVE.has(id))return;
+    (OVL_DATA[id]?.features||[]).forEach(f=>{if(pointInFeature(latlng,f)){
+      const k=f.id||(f.properties?.areaDesc||'')+(f.properties?.event||'')+(f.properties?.num||'');
+      if(!seen.has(k)){seen.add(k);hits.push(f);}
+    }});
+  });
+  if(hits.length)showAlertPopup(latlng,hits,0,mapIdx);
+}
+let _popupHits=[],_popupIdx=0,_popupLL=null,_popupMap=0,_alertPopup=null;
+function showAlertPopup(latlng,hits,idx,mapIdx){
+  _popupHits=hits;_popupIdx=idx;_popupLL=latlng;_popupMap=mapIdx;
+  const m=maps[mapIdx]||maps[0];
+  if(!_alertPopup)_alertPopup=L.popup({maxWidth:360,minWidth:280,className:'alert-popup',autoPan:true});
+  _alertPopup.setLatLng(latlng).setContent(alertPopupHTML(hits[idx],idx,hits.length)).openOn(m);
+}
+function popupNav(dir){
+  const n=_popupHits.length;_popupIdx=(_popupIdx+dir+n)%n;
+  showAlertPopup(_popupLL,_popupHits,_popupIdx,_popupMap);
+}
+function param(p,key){const v=(p.parameters||{})[key];return Array.isArray(v)?v[0]:v;}
+function fmtAlertTime(s){try{const d=new Date(s);return fmtDT(d);}catch(e){return s||'';}}
+function alertPopupHTML(f,idx,total){
+  const p=f.properties||{};const ev=p.event||'Mesoscale Discussion';
+  const c=WARN_CLR[ev]||WATCH_CLR[ev]||(ev.includes('Discussion')?'#ff7700':'#888');
+  // threat tags
+  const tags=[];
+  const hail=param(p,'maxHailSize'); if(hail)tags.push(`🧊 Hail ${hail}\"`);
+  const gust=param(p,'maxWindGust'); if(gust)tags.push(`💨 Wind ${gust}`);
+  const tor=param(p,'tornadoDetection'); if(tor)tags.push(`🌪 ${tor}`);
+  const dmg=param(p,'thunderstormDamageThreat'); if(dmg)tags.push(`⚠ ${dmg}`);
+  const ff=param(p,'flashFloodDamageThreat'); if(ff)tags.push(`🌊 ${ff}`);
+  const exp=p.expires||p.ends;
+  const desc=(p.description||p.concerning||'').trim().replace(/\\n/g,' ').replace(/\s+/g,' ');
+  const nav=total>1?`<div class="ap-nav"><button onclick="popupNav(-1)">‹</button><span>${idx+1} of ${total} alerts here</span><button onclick="popupNav(1)">›</button></div>`:'';
+  return `<div class="ap-card">
+    <div class="ap-head" style="background:${c}"><span>${ev}</span></div>
+    <div class="ap-body">
+      ${p.areaDesc?`<div class="ap-area">${p.areaDesc}</div>`:''}
+      ${tags.length?`<div class="ap-tags">${tags.map(t=>`<span>${t}</span>`).join('')}</div>`:''}
+      ${exp?`<div class="ap-row"><b>Expires:</b> ${fmtAlertTime(exp)}</div>`:''}
+      ${p.senderName?`<div class="ap-row ap-dim">${p.senderName}</div>`:''}
+      ${desc?`<div class="ap-desc">${desc.slice(0,600)}${desc.length>600?'…':''}</div>`:''}
+    </div>
+    ${nav}
+  </div>`;
+}
+
+// — Measure —
+function startMeasure(){measure={pts:[],line:null,markers:[],map:maps[App.focused]};
+  document.getElementById('measure-panel').classList.add('open');positionPanel('measure-panel');
+  document.getElementById('measure-dist').textContent='0 yd';document.getElementById('measure-seg').textContent='0 yd';toast('Measure: click points on the map');}
+function measureClick(ll){
+  measure.pts.push(ll);
+  const mk=L.circleMarker(ll,{radius:3,color:'#fff',weight:1,fillColor:'#ff8a00',fillOpacity:1}).addTo(measure.map);measure.markers.push(mk);
+  if(measure.line)measure.map.removeLayer(measure.line);
+  measure.line=L.polyline(measure.pts,{color:'#ff8a00',weight:2,dashArray:'6 4'}).addTo(measure.map);
+  let total=0;for(let k=1;k<measure.pts.length;k++)total+=haversine(measure.pts[k-1],measure.pts[k]);
+  document.getElementById('measure-dist').textContent=fmtDist(total);
+  if(measure.pts.length>=2)document.getElementById('measure-seg').textContent=fmtDist(haversine(measure.pts[measure.pts.length-2],measure.pts[measure.pts.length-1]));
+}
+function clearMeasure(){if(measure.map){measure.markers.forEach(m=>measure.map.removeLayer(m));if(measure.line)measure.map.removeLayer(measure.line);}
+  measure.pts=[];measure.markers=[];measure.line=null;document.getElementById('measure-dist').textContent='0 yd';document.getElementById('measure-seg').textContent='0 yd';}
+function endMeasure(){clearMeasure();document.getElementById('measure-panel').classList.remove('open');}
+
+// — Estimate —
+function startEstimate(){estimate={a:null,b:null,line:null,markers:[],map:maps[App.focused]};
+  document.getElementById('estimate-panel').classList.add('open');positionPanel('estimate-panel');
+  ['est-dist','est-bearing','est-eta'].forEach(id=>document.getElementById(id).textContent='—');toast('Estimator: click storm, then target');}
+function estimateClick(ll){
+  if(!estimate.a||(estimate.a&&estimate.b)){clearEstimate();estimate.a=ll;
+    estimate.markers.push(L.circleMarker(ll,{radius:5,color:'#fff',weight:2,fillColor:'#ff3355',fillOpacity:1}).addTo(estimate.map).bindTooltip('Storm',{permanent:true,direction:'top'}));
+  }else{estimate.b=ll;
+    estimate.markers.push(L.circleMarker(ll,{radius:5,color:'#fff',weight:2,fillColor:'#00cc66',fillOpacity:1}).addTo(estimate.map).bindTooltip('Target',{permanent:true,direction:'top'}));
+    estimate.line=L.polyline([estimate.a,estimate.b],{color:'#ff8a00',weight:2.5}).addTo(estimate.map);
+    updateEstimate();
+  }
+}
+function updateEstimate(){
+  if(!estimate.a||!estimate.b)return;
+  const d=haversine(estimate.a,estimate.b);const miles=d/1609.34;
+  const spd=Math.max(1,+document.getElementById('est-speed').value||30);
+  const etaMin=miles/spd*60;const brg=bearing(estimate.a,estimate.b);
+  document.getElementById('est-dist').textContent=miles.toFixed(1)+' mi';
+  document.getElementById('est-bearing').textContent=Math.round(brg)+'° '+compass(brg);
+  document.getElementById('est-eta').textContent=etaMin<1?'<1 min':etaMin<60?Math.round(etaMin)+' min':(etaMin/60).toFixed(1)+' hr';
+  if(estimate.etaLabel)estimate.map.removeLayer(estimate.etaLabel);
+  estimate.etaLabel=L.marker(estimate.b,{icon:L.divIcon({className:'',iconSize:[80,20],iconAnchor:[40,-6],html:`<div style="background:rgba(8,12,22,.9);border:1px solid var(--orange);border-radius:6px;padding:1px 6px;font:700 11px monospace;color:#ff8a00;text-align:center;white-space:nowrap">ETA ${etaMin<60?Math.round(etaMin)+'m':(etaMin/60).toFixed(1)+'h'}</div>`})}).addTo(estimate.map);
+}
+function clearEstimate(){if(estimate.map){estimate.markers.forEach(m=>estimate.map.removeLayer(m));if(estimate.line)estimate.map.removeLayer(estimate.line);if(estimate.etaLabel)estimate.map.removeLayer(estimate.etaLabel);}
+  estimate.a=estimate.b=estimate.line=estimate.etaLabel=null;estimate.markers=[];['est-dist','est-bearing','est-eta'].forEach(id=>document.getElementById(id).textContent='—');}
+function endEstimate(){clearEstimate();document.getElementById('estimate-panel').classList.remove('open');}
+
+// — Draw —
+function startDraw(){
+  const panel=document.getElementById(`mp${App.focused}`);const map=maps[App.focused];draw.map=map;
+  map.dragging.disable();map.scrollWheelZoom.disable();map.doubleClickZoom.disable();
+  const cv=document.createElement('canvas');cv.className='draw-cv';
+  const r=panel.getBoundingClientRect();const off=App.screenMode>1?36:6;
+  cv.width=panel.clientWidth;cv.height=panel.clientHeight-off;
+  panel.appendChild(cv);draw.cv=cv;draw.ctx=cv.getContext('2d');draw.active=false;
+  cv.addEventListener('mousedown',drawDown);cv.addEventListener('mousemove',drawMove);
+  window.addEventListener('mouseup',drawUp);
+  document.getElementById('draw-panel').classList.add('open');positionPanel('draw-panel');
+  buildDrawColors();document.getElementById('draw-width').oninput=e=>{draw.width=+e.target.value;document.getElementById('draw-width-val').textContent=e.target.value;};
+  toast('Map frozen — draw freely. Press Done to resume.');
+}
+function drawDown(e){draw.active=true;const r=draw.cv.getBoundingClientRect();draw.last=[e.clientX-r.left,e.clientY-r.top];}
+function drawMove(e){if(!draw.active)return;const r=draw.cv.getBoundingClientRect();const x=e.clientX-r.left,y=e.clientY-r.top;
+  draw.ctx.strokeStyle=draw.color;draw.ctx.lineWidth=draw.width;draw.ctx.lineCap='round';draw.ctx.lineJoin='round';
+  draw.ctx.beginPath();draw.ctx.moveTo(draw.last[0],draw.last[1]);draw.ctx.lineTo(x,y);draw.ctx.stroke();draw.last=[x,y];}
+function drawUp(){draw.active=false;}
+function buildDrawColors(){const d=document.getElementById('draw-colors');d.innerHTML='';
+  DRAW_COLORS.forEach(c=>{const el=document.createElement('div');el.className='draw-color'+(c===draw.color?' active':'');el.style.background=c;
+    el.onclick=()=>{draw.color=c;buildDrawColors();};d.appendChild(el);});}
+function clearDraw(){if(draw.ctx)draw.ctx.clearRect(0,0,draw.cv.width,draw.cv.height);}
+function endDraw(){
+  if(draw.map){draw.map.dragging.enable();draw.map.scrollWheelZoom.enable();draw.map.doubleClickZoom.enable();}
+  if(draw.cv){draw.cv.removeEventListener('mousedown',drawDown);draw.cv.removeEventListener('mousemove',drawMove);window.removeEventListener('mouseup',drawUp);draw.cv.remove();}
+  draw.cv=draw.ctx=draw.map=null;document.getElementById('draw-panel').classList.remove('open');
+}
+function positionPanel(id){const el=document.getElementById(id);el.style.right='14px';el.style.bottom='72px';el.style.left='auto';el.style.top='auto';}
+
+// ════════════════════════════════════════════════════════════════════
+// GPS
+// ════════════════════════════════════════════════════════════════════
+function gpsLocate(){
+  toast('Locating…');
+  const done=(lat,lon,label)=>{
+    maps.forEach(m=>m.flyTo([lat,lon],8,{duration:.9}));
+    const ic=L.divIcon({className:'',iconSize:[18,18],iconAnchor:[9,9],html:'<div style="width:14px;height:14px;background:#00b4ff;border:2px solid #fff;border-radius:50%;box-shadow:0 0 12px #00b4ff"></div>'});
+    maps.forEach(m=>L.marker([lat,lon],{icon:ic}).addTo(m).bindTooltip(label||'You are here',{permanent:false}));
+    // select nearest radar
+    let best=null,bd=1e9;for(const[icao,s] of Object.entries(allSites)){const d=(s.lat-lat)**2+(s.lon-lon)**2;if(d<bd){bd=d;best=icao;}}
+    if(best)toast(`Nearest radar: ${best}`);
+    document.getElementById('t-gps').classList.add('on');setTimeout(()=>document.getElementById('t-gps').classList.remove('on'),2000);
+  };
+  if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(
+      pos=>done(pos.coords.latitude,pos.coords.longitude,'GPS location'),
+      ()=>geoipFallback(done),{timeout:4000,maximumAge:60000});
+  }else geoipFallback(done);
+}
+async function geoipFallback(done){
+  try{const r=await fetch('/api/geoip');const d=await r.json();done(d.lat,d.lon,d.city?`${d.city}, ${d.region}`:'Approx location (IP)');}
+  catch(e){toast('Location unavailable');}
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PRODUCT PICKER
+// ════════════════════════════════════════════════════════════════════
+function openPicker(i){pickerPanel=i;pickerStep='level';
+  document.getElementById('picker-bd').classList.add('open');document.getElementById('picker').classList.add('open');
+  if(App.site&&isRH(App.site)){
+    // Research radars have their own moments — skip the Level II/III step
+    document.getElementById('pk-back').style.display='none';
+    document.getElementById('pk-title').textContent='Research Radar Moments';
+    const cur=App.panels[i];renderL3((productsFlat[cur.product]||{}).cat||'Reflectivity');
+  }else{
+    renderLevel();document.getElementById('pk-back').style.display='none';
+    document.getElementById('pk-title').textContent='Select Data Level';
+  }
+}
+function closePicker(){document.getElementById('picker-bd').classList.remove('open');document.getElementById('picker').classList.remove('open');}
+function pickerBack(){renderLevel();document.getElementById('pk-back').style.display='none';document.getElementById('pk-title').textContent='Select Data Level';}
+function renderLevel(){document.getElementById('pk-body').innerHTML=`<div class="lvl-cards">
+  <div class="lvl-card" onclick="pickLevel('l2')"><div class="lvl-num">2</div><div class="lvl-name">Level II</div><div class="lvl-desc">Raw base data — highest-resolution moments straight from the radar.</div><div class="lvl-list">REF · VEL · SW · ZDR · PHI · RHO</div></div>
+  <div class="lvl-card" onclick="pickLevel('l3')"><div class="lvl-num">3</div><div class="lvl-name">Level III</div><div class="lvl-desc">Derived products across all tilts — reflectivity, velocity, dual-pol, precip.</div><div class="lvl-list">45 products · 5 categories</div></div></div>`;}
+const L2M=[{c:'REF',n:'Reflectivity'},{c:'VEL',n:'Velocity'},{c:'SW',n:'Spectrum Width'},{c:'ZDR',n:'Diff. Reflectivity'},{c:'PHI',n:'Diff. Phase'},{c:'RHO',n:'Correlation Coeff'}];
+function pickLevel(lvl){document.getElementById('pk-back').style.display='inline-block';const cur=App.panels[pickerPanel];
+  if(lvl==='l2'){document.getElementById('pk-title').textContent='Level II — Raw Moments';
+    let h='<div class="l2-grid">';L2M.forEach(m=>{const a=cur.level===2&&cur.product===m.c;h+=`<div class="l2-btn${a?' active':''}" onclick="pickL2('${m.c}')"><div class="l2-code">${m.c}</div><div class="l2-name">${m.n}</div></div>`;});h+='</div>';
+    h+=`<div style="margin-top:12px;padding:10px;background:rgba(255,208,0,.08);border:1px solid rgba(255,208,0,.2);border-radius:6px;font-size:11px;color:rgba(255,208,0,.85)">ℹ Level-II uses raw Archive-II files. Selecting a moment shows the scan list &amp; download links.</div>`;
+    document.getElementById('pk-body').innerHTML=h;
+  }else{document.getElementById('pk-title').textContent='Level III — Products';let ac=Object.keys(allProducts)[0];if(cur.level===3&&productsFlat[cur.product])ac=productsFlat[cur.product].cat;renderL3(ac);}
+}
+function renderL3(cat){
+  const kind=App.site?siteKind(App.site):'';
+  const isTdwr=kind==='tdwr',isResearch=kind==='rh';
+  const match=isResearch?(p=>p.radarhub):isTdwr?(p=>p.tdwr):(p=>!p.tdwr&&!p.radarhub);
+  // only categories that have products for this radar type
+  const cats=Object.keys(allProducts).filter(c=>(allProducts[c]||[]).some(match));
+  if(!cats.includes(cat))cat=cats[0]||cat;
+  const cur=App.panels[pickerPanel];
+  const hdr=isResearch?'🔬 Research radar moments (OU ARRC · RadarHub)':isTdwr?'📡 TDWR terminal radar products':'NEXRAD products';
+  let h=`<div style="font-size:11px;color:var(--dim);margin-bottom:8px">${hdr}</div><div class="cat-tabs">`;
+  cats.forEach(c=>h+=`<button class="cat-tab${c===cat?' active':''}" onclick="renderL3('${c}')">${c}</button>`);h+='</div><div class="prod-list">';
+  (allProducts[cat]||[]).filter(match).forEach(p=>{const a=cur.level===3&&cur.product===p.code;h+=`<div class="prod-item${a?' active':''}" onclick="pickL3('${p.code}')"><span class="pi-code">${p.code}</span><span class="pi-name">${p.name}</span>${p.tilt?`<span class="pi-tilt">Elev ${p.tilt}°</span>`:''}<span class="pi-chk">${a?'✓':''}</span></div>`;});h+='</div>';
+  document.getElementById('pk-body').innerHTML=h;}
+function pickL3(code){App.panels[pickerPanel].product=code;App.panels[pickerPanel].level=3;closePicker();updatePanelHeader(pickerPanel);updateColorbar(pickerPanel);if(App.site)refreshPanel(pickerPanel);}
+function pickL2(code){App.panels[pickerPanel].product=code;App.panels[pickerPanel].level=2;closePicker();updatePanelHeader(pickerPanel);toast(`Level-II ${code} selected (download via scan list)`);}
+
+// ════════════════════════════════════════════════════════════════════
+// RADAR SITE PICKER
+// ════════════════════════════════════════════════════════════════════
+function openRadarPicker(){
+  document.getElementById('radarpk-bd').classList.add('open');document.getElementById('radarpk').classList.add('open');
+  document.getElementById('rpk-search').value='';renderRadarPicker('');
+  // also zoom focused map out to show all dots
+  if(maps[0])maps.forEach(m=>m.flyTo([39,-97],4,{duration:.6}));
+}
+function closeRadarPicker(){document.getElementById('radarpk-bd').classList.remove('open');document.getElementById('radarpk').classList.remove('open');}
+function renderRadarPicker(q){
+  q=(q||'').toUpperCase().trim();
+  const byState={};const RES='🔬 RESEARCH';
+  for(const[icao,s] of Object.entries(allSites)){
+    if(q&&!icao.includes(q)&&!s.name.toUpperCase().includes(q)&&!s.state.toUpperCase().includes(q))continue;
+    const grp=s.radarhub?RES:s.state;
+    (byState[grp]=byState[grp]||[]).push([icao,s]);
+  }
+  // Research group first, then states alphabetically
+  const DOWG='🛻 FARM / DOW (mobile · plot viewer)';
+  // re-key DOW radars into their own group
+  for(const k of Object.keys(byState)){if(k==='FARM'){byState[DOWG]=byState[k];delete byState[k];}}
+  const order=(x)=>x===RES?0:x===DOWG?1:2;
+  const states=Object.keys(byState).sort((a,b)=>{const oa=order(a),ob=order(b);return oa!==ob?oa-ob:(a<b?-1:1);});
+  let h='';
+  if(!states.length)h='<div style="padding:20px;text-align:center;color:var(--dim)">No matching sites</div>';
+  states.forEach(st=>{h+=`<div class="rpk-state">${st}</div><div class="rpk-grid">`;
+    byState[st].sort((a,b)=>a[0]<b[0]?-1:1).forEach(([icao,s])=>{const sub=s.dow?('last '+(s.lastPlot||'').slice(5,16)+'Z'):s.name;h+=`<div class="rpk-site${icao===App.site?' active':''}" onclick="selectSite('${icao}')"><span class="rpk-icao">${icao}</span><span class="rpk-city">${sub}</span></div>`;});h+='</div>';});
+  document.getElementById('rpk-body').innerHTML=h;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// HISTORY
+// ════════════════════════════════════════════════════════════════════
+function openHistory(){const p=document.getElementById('history-panel');p.classList.toggle('open');document.getElementById('hist-date').value=App.histDate||todayStr();}
+function loadHistory(){const d=document.getElementById('hist-date').value;if(!d)return;App.histDate=d;document.getElementById('bl-time').classList.add('hist');toast(`Loading history for ${d}`);if(App.site)refreshAllPanels();}
+function exitHistory(){App.histDate=null;document.getElementById('bl-time').classList.remove('hist');document.getElementById('history-panel').classList.remove('open');toast('Back to live');if(App.site)refreshAllPanels();}
+
+// ════════════════════════════════════════════════════════════════════
+// MENU / SEARCH / FRAME PICKER
+// ════════════════════════════════════════════════════════════════════
+function buildOverlayMenu(){
+  const c=document.getElementById('overlay-list');c.innerHTML='';
+  OVL_ORDER.forEach(id=>{const cfg=OVL_CFG[id];if(!cfg)return;
+    const row=document.createElement('div');row.className='ovl-row';row.onclick=()=>toggleDataOverlay(id);
+    row.innerHTML=`<div class="ovl-chk${OVL_ACTIVE.has(id)?' on':''}" id="chk-${id}">${OVL_ACTIVE.has(id)?'✓':''}</div><div style="flex:1"><div class="ovl-name">${cfg.label}</div>${cfg.sub?`<div class="ovl-sub">${cfg.sub}</div>`:''}</div>`;
+    c.appendChild(row);});
+}
+function toggleSec(el){el.classList.toggle('collapsed');const grp=el.nextElementSibling;if(grp)grp.style.display=el.classList.contains('collapsed')?'none':'';}
+function openMenu(){document.getElementById('menu-bd').classList.add('open');document.getElementById('menu').classList.add('open');}
+function closeMenu(){document.getElementById('menu-bd').classList.remove('open');document.getElementById('menu').classList.remove('open');}
+
+function openSearch(){const o=document.getElementById('search-ov');o.classList.add('open');const inp=document.getElementById('search-inp');inp.value='';inp.focus();filterSearch('');}
+function closeSearch(){document.getElementById('search-ov').classList.remove('open');}
+function filterSearch(q){q=(q||'').toUpperCase().trim();const res=document.getElementById('search-results');
+  const m=Object.entries(allSites).filter(([i,s])=>!q||i.includes(q)||s.name.toUpperCase().includes(q)||s.state.toUpperCase().includes(q)).slice(0,40);
+  res.innerHTML=m.map(([i,s])=>`<div class="sr-item" onclick="selectSite('${i}')"><span class="sr-icao">${i}</span><span class="sr-name">${s.name}</span><span class="sr-state">${s.state}</span></div>`).join('');}
+
+function openFramePicker(e){if(e)e.stopPropagation();const fp=document.getElementById('framepk');
+  if(fp.classList.contains('open')){fp.classList.remove('open');return;}
+  fp.innerHTML='<div style="padding:6px 10px;font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px">Animation Frames</div>';
+  [7,10,15,20,30,50].forEach(n=>{const d=document.createElement('div');d.className='fp-opt'+(n===App.frameCount?' active':'');d.innerHTML=`<span class="fp-chk">${n===App.frameCount?'✓':''}</span>${n} frames`;
+    d.onclick=ev=>{ev.stopPropagation();App.frameCount=n;document.getElementById('bl-frame-txt').textContent=`${n} Frames`;fp.classList.remove('open');if(App.site)refreshAllPanels();};fp.appendChild(d);});
+  fp.classList.add('open');
+}
+document.addEventListener('click',e=>{if(!e.target.closest('#bl')&&!e.target.closest('#framepk'))document.getElementById('framepk').classList.remove('open');});
+
+// ════════════════════════════════════════════════════════════════════
+// SETTINGS
+// ════════════════════════════════════════════════════════════════════
+function setBasemap(key){App.basemap=key;document.querySelectorAll('.bmap-btn').forEach(b=>b.classList.toggle('active',b.dataset.bm===key));
+  const b=BASEMAPS[key]||BASEMAPS.osm;baseTiles.forEach((bt,i)=>{if(bt)maps[i].removeLayer(bt);baseTiles[i]=L.tileLayer(b.url,{attribution:b.attr,maxZoom:b.maxZ||19});baseTiles[i].addTo(maps[i]);baseTiles[i].bringToBack();});}
+function getOpacity(){return (document.getElementById('opacity-sl').value)/100;}
+function setOpacity(v){document.getElementById('opacity-val').textContent=v+'%';const op=v/100;App.panels.forEach(p=>{if(p.radarLayer)p.radarLayer.setOpacity(op);});}
+function toggleSound(){App.soundEnabled=!App.soundEnabled;document.getElementById('t-sound').classList.toggle('on',!App.soundEnabled);toast(App.soundEnabled?'Sound on':'Sound muted');}
+
+// ── helpers ────────────────────────────────────────────────────────
+function todayStr(){return new Date().toISOString().slice(0,10);}
+// Live "data age" readout in the bottom-left, so freshness is always visible
+function updateAgeReadout(){
+  const el=document.getElementById('bl-time');if(!el)return;
+  const p=App.panels[0];
+  if(!p||!p.scanTime){el.textContent=p&&p.ts?p.ts:'--';return;}
+  const ageMin=(Date.now()-p.scanTime.getTime())/60000;
+  let ageTxt, cls='';
+  if(ageMin<1.5)      {ageTxt='live';            cls='';}
+  else if(ageMin<15)  {ageTxt=Math.round(ageMin)+' min old'; cls='';}
+  else if(ageMin<60)  {ageTxt=Math.round(ageMin)+' min old'; cls='stale';}
+  else                {ageTxt=(ageMin/60).toFixed(1)+' hr old'; cls='stale';}
+  el.classList.toggle('hist', cls==='stale' && !App.histDate);
+  el.textContent=`${p.ts}  ·  ${App.histDate?'history':ageTxt}`;
+}
+setInterval(updateAgeReadout, 5000);
+
+function tzAbbr(dt){try{return dt.toLocaleTimeString('en-US',{timeZoneName:'short'}).split(' ').pop();}catch(e){return '';}}
+// Display radar scan time in the user's LOCAL timezone (the Date is a correct UTC instant).
+function fmtDT(dt){const p=n=>String(n).padStart(2,'0');const h=dt.getHours();const ap=h>=12?'PM':'AM';const h12=h%12||12;return `${dt.getMonth()+1}/${dt.getDate()}/${String(dt.getFullYear()).slice(2)} ${h12}:${p(dt.getMinutes())}:${p(dt.getSeconds())} ${ap} ${tzAbbr(dt)}`;}
+function haversine(a,b){const R=6371000,t=Math.PI/180;const dla=(b.lat-a.lat)*t,dlo=(b.lng-a.lng)*t;const x=Math.sin(dla/2)**2+Math.cos(a.lat*t)*Math.cos(b.lat*t)*Math.sin(dlo/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
+function bearing(a,b){const t=Math.PI/180;const y=Math.sin((b.lng-a.lng)*t)*Math.cos(b.lat*t);const x=Math.cos(a.lat*t)*Math.sin(b.lat*t)-Math.sin(a.lat*t)*Math.cos(b.lat*t)*Math.cos((b.lng-a.lng)*t);return (Math.atan2(y,x)/t+360)%360;}
+function compass(d){return['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'][Math.round(d/22.5)%16];}
+function fmtDist(m){const yd=m*1.09361;if(yd<1760)return `${Math.round(yd)} yd`;return `${(m/1609.34).toFixed(2)} mi`;}
+let toastTimer=null;
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2600);}
+
+// Sticky warning store: a warning stays until ITS OWN expiration passes, so a
+// flaky NWS feed (which intermittently drops still-active alerts) can't make
+// warnings blink away. New/updated alerts are merged in by id.
+let warnStore={};
+async function refreshAlerts(){try{
+  const r=await fetch('/api/overlay/warnings?_='+Date.now(),{cache:'no-store'});
+  const d=await r.json();const now=Date.now();
+  (d.features||[]).forEach(f=>{const id=f.id||f.properties?.id;if(id)warnStore[id]=f;});
+  // drop only the ones whose own expires/ends time has actually passed
+  Object.keys(warnStore).forEach(id=>{
+    const p=warnStore[id].properties||{};
+    const t=Date.parse(p.ends||p.expires||'');
+    if(t&&t<now-60000) delete warnStore[id];   // 60s grace
+  });
+  const fc={type:'FeatureCollection',features:Object.values(warnStore)};
+  OVL_DATA['warnings']=fc;
+  const n=fc.features.length;const b=document.getElementById('alerts-badge');
+  b.textContent=`${n} ALERTS`;b.style.display=n>0?'block':'none';
+  if(OVL_ACTIVE.has('warnings')){disableOverlay('warnings');OVL_ACTIVE.delete('warnings');await enableOverlay('warnings');}
+}catch(e){}}
+
+document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;
+  if(e.key===' '){e.preventDefault();toggleAnim();}if(e.key==='ArrowLeft')stepFrame(-1);if(e.key==='ArrowRight')stepFrame(1);
+  if(e.key==='Escape'){closePicker();closeMenu();closeSearch();closeRadarPicker();if(App.tool){exitTool(App.tool);App.tool=null;}}});
+document.addEventListener('click',initAudio,{once:true});
+
+// ════════════════════════════════════════════════════════════════════
+// AUTO-UPDATE
+// ════════════════════════════════════════════════════════════════════
+let _updUrl=null,_updVer=null,_updPolling=null;
+async function checkForUpdate(){
+  try{
+    const d=await(await fetch('/api/update/check',{cache:'no-store'})).json();
+    if(d.update&&d.url){
+      _updUrl=d.url;_updVer=d.latest;
+      document.getElementById('upd-msg').textContent=`Update v${d.latest} available`;
+      document.getElementById('upd-btn').textContent='Download';
+      document.getElementById('upd-btn').className='upd-btn';
+      document.getElementById('upd-icon').textContent='🔄';
+      document.getElementById('update-bar').classList.add('visible');
+    }
+  }catch(e){}
+}
+async function updAction(){
+  const btn=document.getElementById('upd-btn');
+  if(btn.dataset.state==='install'){installUpdate();return;}
+  // start download
+  btn.textContent='Starting…';btn.disabled=true;
+  await fetch(`/api/update/download?url=${encodeURIComponent(_updUrl)}`);
+  document.getElementById('upd-prog').style.display='block';
+  _updPolling=setInterval(async()=>{
+    try{
+      const p=await(await fetch('/api/update/progress')).json();
+      document.getElementById('upd-fill').style.width=p.pct+'%';
+      document.getElementById('upd-msg').textContent=
+        p.status==='ready'?`v${_updVer} ready to install`:
+        p.status==='error'?'Download failed — try again':
+        `Downloading v${_updVer}… ${p.pct}%`;
+      if(p.status==='ready'){
+        clearInterval(_updPolling);
+        document.getElementById('upd-prog').style.display='none';
+        btn.textContent='Install & Relaunch';btn.className='upd-btn install';
+        btn.dataset.state='install';btn.disabled=false;
+        document.getElementById('upd-icon').textContent='✅';
+      }else if(p.status==='error'){
+        clearInterval(_updPolling);
+        btn.textContent='Download';btn.disabled=false;
+        document.getElementById('upd-prog').style.display='none';
+      }
+    }catch(e){}
+  },800);
+}
+async function installUpdate(){
+  document.getElementById('upd-msg').textContent='Installing… app will relaunch';
+  document.getElementById('upd-btn').disabled=true;
+  await fetch('/api/update/install');
+}
+// ════════════════════════════════════════════════════════════════════
+(async()=>{
+  await Promise.all([loadSites(),loadProducts()]);
+  await loadDOW();                   // FARM/DOW radars (after sites — merges in)
+  initMaps(1);                       // builds maps + site markers (sites already loaded!)
+  buildOverlayMenu();
+  await enableOverlay('warnings');    // default overlay
+  startLive();refreshAlerts();setInterval(refreshAlerts,30*1000);
+  toast('Click a radar site on the map, or use 📡 to browse all sites');
+  setTimeout(checkForUpdate, 8000);   // check for updates after app loads
+})();
+</script>
+</body>
+</html>

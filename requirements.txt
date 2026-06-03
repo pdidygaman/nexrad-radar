@@ -1,0 +1,9 @@
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+boto3>=1.28.0
+metpy>=1.5.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+pillow>=10.0.0
+requests>=2.31.0
+pywebview>=5.0

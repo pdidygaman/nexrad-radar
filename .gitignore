@@ -1,0 +1,39 @@
+# Build outputs
+dist/
+build/
+installer/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# App cache (user data, not source)
+cache/
+
+# Logs
+*.log
+_b.log
+_i.log
+build_log.txt
+
+# Temp / diagnostic files
+_*.py
+_*.png
+_ocr_test.png
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Environment
+.env
+*.env
+
+# OS
+.DS_Store
+Thumbs.db
