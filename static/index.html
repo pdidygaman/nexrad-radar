@@ -318,7 +318,7 @@ html,body{height:100%;width:100%;overflow:hidden;background:#000;color:#fff;
   <span class="upd-msg" id="upd-msg">Update available</span>
   <div class="upd-prog" id="upd-prog"><div class="upd-prog-fill" id="upd-fill"></div></div>
   <button class="upd-btn" id="upd-btn" onclick="updAction()">Download</button>
-  <button class="upd-close" onclick="document.getElementById('update-bar').classList.remove('visible')" title="Dismiss">✕</button>
+  <button class="upd-close" onclick="updAction()" title="Postpone until next launch">✕</button>
 </div>
 
 <!-- TOP BAR -->
@@ -1599,53 +1599,80 @@ document.addEventListener('click',initAudio,{once:true});
 // ════════════════════════════════════════════════════════════════════
 // AUTO-UPDATE
 // ════════════════════════════════════════════════════════════════════
-let _updUrl=null,_updVer=null,_updPolling=null;
+// ── Fully-automatic silent updater ──────────────────────────────────
+// 1. Check GitHub on startup → if newer version exists, download silently
+// 2. Show subtle progress in the bar (user can dismiss/skip)
+// 3. When download finishes → countdown 5 s then auto-install + relaunch
+// 4. User can always hit ✕ to postpone until next launch
+let _updUrl=null,_updVer=null,_updPolling=null,_updCountdown=null,_updSkipped=false;
+
+function _updBar(icon,msg,showProg,btnLabel,btnCls){
+  document.getElementById('upd-icon').textContent=icon;
+  document.getElementById('upd-msg').textContent=msg;
+  document.getElementById('upd-prog').style.display=showProg?'block':'none';
+  const btn=document.getElementById('upd-btn');
+  if(btnLabel){btn.textContent=btnLabel;btn.className='upd-btn '+(btnCls||'');btn.style.display='';}
+  else btn.style.display='none';
+  document.getElementById('update-bar').classList.add('visible');
+}
+
 async function checkForUpdate(){
   try{
     const d=await(await fetch('/api/update/check',{cache:'no-store'})).json();
     if(d.update&&d.url){
       _updUrl=d.url;_updVer=d.latest;
-      document.getElementById('upd-msg').textContent=`Update v${d.latest} available`;
-      document.getElementById('upd-btn').textContent='Download';
-      document.getElementById('upd-btn').className='upd-btn';
-      document.getElementById('upd-icon').textContent='🔄';
-      document.getElementById('update-bar').classList.add('visible');
+      _updBar('⬇',`Downloading update v${d.latest}…`,true,null,null);
+      _autoDownload();
     }
   }catch(e){}
 }
-async function updAction(){
-  const btn=document.getElementById('upd-btn');
-  if(btn.dataset.state==='install'){installUpdate();return;}
-  // start download
-  btn.textContent='Starting…';btn.disabled=true;
-  await fetch(`/api/update/download?url=${encodeURIComponent(_updUrl)}`);
-  document.getElementById('upd-prog').style.display='block';
-  _updPolling=setInterval(async()=>{
-    try{
-      const p=await(await fetch('/api/update/progress')).json();
-      document.getElementById('upd-fill').style.width=p.pct+'%';
-      document.getElementById('upd-msg').textContent=
-        p.status==='ready'?`v${_updVer} ready to install`:
-        p.status==='error'?'Download failed — try again':
-        `Downloading v${_updVer}… ${p.pct}%`;
-      if(p.status==='ready'){
-        clearInterval(_updPolling);
-        document.getElementById('upd-prog').style.display='none';
-        btn.textContent='Install & Relaunch';btn.className='upd-btn install';
-        btn.dataset.state='install';btn.disabled=false;
-        document.getElementById('upd-icon').textContent='✅';
-      }else if(p.status==='error'){
-        clearInterval(_updPolling);
-        btn.textContent='Download';btn.disabled=false;
-        document.getElementById('upd-prog').style.display='none';
-      }
-    }catch(e){}
-  },800);
+
+async function _autoDownload(){
+  try{
+    await fetch(`/api/update/download?url=${encodeURIComponent(_updUrl)}`);
+    _updPolling=setInterval(async()=>{
+      try{
+        if(_updSkipped){clearInterval(_updPolling);return;}
+        const p=await(await fetch('/api/update/progress')).json();
+        document.getElementById('upd-fill').style.width=p.pct+'%';
+        if(p.status==='downloading'){
+          _updBar('⬇',`Downloading update v${_updVer}… ${p.pct}%`,true,null,null);
+        }else if(p.status==='ready'){
+          clearInterval(_updPolling);
+          if(_updSkipped)return;
+          _startCountdown();
+        }else if(p.status==='error'){
+          clearInterval(_updPolling);
+          _updBar('⚠','Update download failed — will retry next launch',false,null,null);
+          setTimeout(()=>document.getElementById('update-bar').classList.remove('visible'),4000);
+        }
+      }catch(e){}
+    },800);
+  }catch(e){}
 }
-async function installUpdate(){
-  document.getElementById('upd-msg').textContent='Installing… app will relaunch';
-  document.getElementById('upd-btn').disabled=true;
-  await fetch('/api/update/install');
+
+function _startCountdown(){
+  let sec=5;
+  _updBar('✅',`Update v${_updVer} ready — relaunching in ${sec}s`,false,'Skip','');
+  _updCountdown=setInterval(()=>{
+    if(_updSkipped){clearInterval(_updCountdown);return;}
+    sec--;
+    if(sec<=0){
+      clearInterval(_updCountdown);
+      _updBar('🔄','Installing update… relaunching now',false,null,null);
+      fetch('/api/update/install');   // backend launches installer then os._exit(0)
+    }else{
+      document.getElementById('upd-msg').textContent=`Update v${_updVer} ready — relaunching in ${sec}s`;
+    }
+  },1000);
+}
+
+function updAction(){
+  // Skip / dismiss — postpone the update until the next launch
+  _updSkipped=true;
+  clearInterval(_updCountdown);clearInterval(_updPolling);
+  document.getElementById('update-bar').classList.remove('visible');
+  toast('Update postponed — it will apply next time you open the app');
 }
 // ════════════════════════════════════════════════════════════════════
 (async()=>{

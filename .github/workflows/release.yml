@@ -13,6 +13,10 @@ on:
         required: false
         default: '0.0.0'
 
+# Needed so the release step can create the GitHub Release + upload the installer.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -63,8 +67,13 @@ jobs:
           Write-Output "exe OK: $((Get-Item $exe).Length) bytes"
 
       # ── 5. Inno Setup ───────────────────────────────────────────────
-      - name: Install Inno Setup 6
-        run: choco install innosetup --yes --no-progress --version 6.2.2
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          Write-Output "Downloading latest Inno Setup 6..."
+          curl.exe -L --retry 3 -o "$env:RUNNER_TEMP\innosetup.exe" https://jrsoftware.org/download.php/is.exe
+          Start-Process -Wait -FilePath "$env:RUNNER_TEMP\innosetup.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-'
+          Write-Output "Inno Setup installed."
 
       - name: Build installer
         shell: pwsh
@@ -73,9 +82,10 @@ jobs:
           if (-not (Test-Path $iscc)) {
             $iscc = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
           }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found after install" }
           Write-Output "ISCC: $iscc"
           & $iscc installer.iss
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup compile failed" }
 
       # ── 6. Rename installer with version ────────────────────────────
       - name: Rename installer

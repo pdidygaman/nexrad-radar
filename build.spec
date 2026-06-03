@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 datas = [('static', 'static'), ('icon.ico', '.'),
          ('gazetteer.tsv', '.'), ('ocr_win.ps1', '.'),
-         ('version.py', '.')]
+         ('version.py', '.'), ('updater.ps1', '.')]
 binaries = []
 hiddenimports = []
 

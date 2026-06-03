@@ -2099,17 +2099,28 @@ def api_update_progress():
 
 @app.get('/api/update/install')
 def api_update_install():
-    """Launch the downloaded installer silently, then exit so it can overwrite files."""
+    """Hand off to the detached updater helper, then exit so the running app's
+    files unlock. The helper waits for us to close, installs silently, relaunches."""
     import subprocess as _sp, threading as _th
     global _upd_dl_path
     if not _upd_dl_path or not pathlib.Path(_upd_dl_path).exists():
         raise HTTPException(400, 'No installer downloaded yet')
+    helper  = RESOURCE_DIR / 'updater.ps1'
+    app_exe = sys.executable   # frozen → the NEXRAD Radar.exe to relaunch
     try:
-        flags = 0x08000000  # CREATE_NO_WINDOW
-        _sp.Popen([_upd_dl_path, '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
-                  creationflags=flags)
+        if helper.exists() and getattr(sys, 'frozen', False):
+            # CREATE_NO_WINDOW (0x08000000); child survives our os._exit by default
+            _sp.Popen(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                       '-File', str(helper), '-Installer', _upd_dl_path,
+                       '-AppExe', app_exe],
+                      creationflags=0x08000000, close_fds=True)
+        else:
+            # dev fallback: just run the installer
+            _sp.Popen([_upd_dl_path, '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
+                      creationflags=0x08000000)
+
         def _bye():
-            import time; time.sleep(1); os._exit(0)
+            import time; time.sleep(1.5); os._exit(0)
         _th.Thread(target=_bye, daemon=True).start()
         return {'installing': True}
     except Exception as e:

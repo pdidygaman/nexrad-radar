@@ -27,6 +27,11 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
+; Auto-update safety net: if a running instance still holds the app files
+; (e.g. a lingering child process), close it via the Restart Manager rather
+; than failing. We relaunch the app ourselves (updater.ps1), so don't restart.
+CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
