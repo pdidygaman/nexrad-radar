@@ -37,3 +37,6 @@ _ocr_test.png
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code project memory (internal tooling state, not app source)
+.claude/
