@@ -63,9 +63,10 @@ def _port_open(host: str, port: int) -> bool:
 def _set_app_id():
     """
     Give the process an explicit AppUserModelID so Windows shows the app's own
-    icon on the taskbar (not a generic one) and groups the window under the
-    pinned Start-menu / taskbar shortcut.
+    icon on the taskbar. Windows-only; no-op on macOS/Linux.
     """
+    if sys.platform != 'win32':
+        return
     try:
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('NEXRADRadar.Viewer.1')

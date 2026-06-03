@@ -1770,8 +1770,12 @@ def _load_gazetteer():
 
 def _ocr_words(img_bytes: bytes, upscale: int = 3):
     """OCR an image via the bundled Windows.Media.Ocr helper. Returns list of
-    {text,x,y,w,h} in UPSCALED pixel coords, plus the upscale factor."""
+    {text,x,y,w,h} in UPSCALED pixel coords, plus the upscale factor.
+    Windows-only; on macOS/Linux this returns [] so DOW auto-locate simply
+    falls back to a regional view (no OCR engine bundled there yet)."""
     import subprocess, tempfile, json as _j
+    if sys.platform != 'win32':
+        return [], upscale
     ps1 = RESOURCE_DIR / 'ocr_win.ps1'
     if not ps1.exists():
         return [], upscale
@@ -2064,18 +2068,36 @@ def api_update_check():
         with urllib.request.urlopen(req, timeout=8) as r:
             data = _json.loads(r.read())
         latest = data.get('tag_name', '').lstrip('v')
+        # Pick the asset for THIS platform: .dmg on macOS, .exe on Windows.
+        want = '.dmg' if sys.platform == 'darwin' else '.exe'
         dl_url = next((a['browser_download_url'] for a in data.get('assets', [])
-                       if a['name'].lower().endswith('.exe')), None)
+                       if a['name'].lower().endswith(want)), None)
         has_update = bool(latest) and _ver_tuple(latest) > _ver_tuple(__version__)
         return {
             'update':   has_update,
             'current':  __version__,
             'latest':   latest,
+            'platform': sys.platform,
             'url':      dl_url if has_update else None,
+            'page':     f'https://github.com/{GITHUB_REPO}/releases/latest',
             'notes':    (data.get('body') or '')[:600],
         }
     except Exception as e:
-        return {'update': False, 'current': __version__, 'error': str(e)}
+        return {'update': False, 'current': __version__, 'platform': sys.platform, 'error': str(e)}
+
+
+@app.get('/api/open')
+def api_open(url: str = Query(...)):
+    """Open a (GitHub) URL in the system default browser — used by the macOS
+    update flow to send the user to the releases page."""
+    if not url.startswith('https://github.com/'):
+        raise HTTPException(400, 'only github.com URLs allowed')
+    try:
+        import webbrowser
+        webbrowser.open(url)
+        return {'opened': True}
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 @app.get('/api/update/download')

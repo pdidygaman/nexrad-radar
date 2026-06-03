@@ -115,3 +115,73 @@ jobs:
           files: ${{ env.INSTALLER }}
           draft: false
           prerelease: false
+
+  # ════════════════════════════════════════════════════════════════════
+  # macOS build — produces a .dmg. Runs after the Windows job so the
+  # release already exists; this job just appends the .dmg to it.
+  # ════════════════════════════════════════════════════════════════════
+  build-macos:
+    runs-on: macos-latest
+    needs: build
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ github.event.inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          printf "__version__ = '%s'\n" "$V" > version.py
+          echo "Building macOS version $V"
+
+      - name: Generate icon.icns
+        run: |
+          mkdir -p icon.iconset
+          for s in 16 32 128 256 512; do
+            sips -z $s $s icon.png --out "icon.iconset/icon_${s}x${s}.png"
+            d=$((s*2))
+            sips -z $d $d icon.png --out "icon.iconset/icon_${s}x${s}@2x.png"
+          done
+          iconutil -c icns icon.iconset -o icon.icns
+          ls -la icon.icns
+
+      - name: Build .app
+        run: python -m PyInstaller --noconfirm --clean build_mac.spec
+
+      - name: Verify .app and package .dmg
+        run: |
+          APP="dist/NEXRAD Radar.app"
+          if [ ! -d "$APP" ]; then echo "ERROR: .app not produced"; ls -la dist; exit 1; fi
+          # ad-hoc sign so Gatekeeper doesn't report it as "damaged"
+          codesign --force --deep --sign - "$APP" || true
+          mkdir -p dmgroot
+          cp -R "$APP" dmgroot/
+          ln -s /Applications dmgroot/Applications
+          DMG="NEXRAD-Radar-v${VERSION}-mac.dmg"
+          hdiutil create -volname "NEXRAD Radar" -srcfolder dmgroot -ov -format UDZO "$DMG"
+          echo "DMG=$DMG" >> "$GITHUB_ENV"
+          ls -la "$DMG"
+
+      - name: Upload .dmg to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: ${{ env.DMG }}

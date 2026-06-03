@@ -1511,9 +1511,16 @@ let _speakingIdx=null,_ttsV=null;
 function ttsVoice(){
   if(_ttsV)return _ttsV;
   const vs=(window.speechSynthesis&&speechSynthesis.getVoices())||[];
-  const pref=['Natural','Online','Aria','Jenny','Guy','Google US English','Zira','David','Samantha'];
-  for(const nm of pref){const v=vs.find(v=>v.name.includes(nm)&&/^en/i.test(v.lang));if(v){_ttsV=v;return v;}}
-  _ttsV=vs.find(v=>/en-US/i.test(v.lang))||vs.find(v=>/^en/i.test(v.lang))||vs[0]||null;return _ttsV;
+  // NOAA Weather Radio uses a steady MALE voice ("Paul"). Prefer clear US-English
+  // MALE voices that evoke that tone; explicitly avoid the bright female voices.
+  const female=/aria|jenny|zira|hazel|eva|sonia|susan|samantha|catherine|linda|heera|female|woman|girl|\(f\)/i;
+  const pref=['Microsoft David','David','Microsoft Mark','Mark','Microsoft Guy','Guy','Alex','Daniel','Aaron','Fred','Tom','Paul','Rocko','Reed','Eddy'];
+  for(const nm of pref){const v=vs.find(v=>v.name.includes(nm)&&/^en/i.test(v.lang)&&!female.test(v.name));if(v){_ttsV=v;return v;}}
+  // else any en-US that isn't obviously a female voice, then any English voice
+  _ttsV=vs.find(v=>/en[-_]?US/i.test(v.lang)&&!female.test(v.name))
+       ||vs.find(v=>/^en/i.test(v.lang)&&!female.test(v.name))
+       ||vs.find(v=>/^en/i.test(v.lang))||vs[0]||null;
+  return _ttsV;
 }
 if('speechSynthesis' in window){try{speechSynthesis.onvoiceschanged=()=>{_ttsV=null;ttsVoice();};}catch(e){}}
 function alertSpeak(i,ev){
@@ -1526,7 +1533,8 @@ function alertSpeak(i,ev){
   if(!text||text==='Loading…'){alertToggleDesc(i).then(()=>alertSpeak(i));return;}
   const head=alertEvent(it.f)+'. '+(p.areaDesc?('For '+p.areaDesc+'. '):'');
   const u=new SpeechSynthesisUtterance(head+text);
-  const v=ttsVoice();if(v)u.voice=v;u.rate=.98;u.pitch=1;u.volume=1;
+  // NOAA Weather Radio cadence: steady, slightly slow, lower pitch (not perky)
+  const v=ttsVoice();if(v)u.voice=v;u.rate=.9;u.pitch=.82;u.volume=1;
   u.onend=()=>{if(_speakingIdx===i)stopSpeak();};
   u.onerror=()=>{if(_speakingIdx===i)stopSpeak();};
   _speakingIdx=i;
@@ -1833,11 +1841,19 @@ function _updBar(icon,msg,showProg,btnLabel,btnCls){
   document.getElementById('update-bar').classList.add('visible');
 }
 
+let _updPage=null;
 async function checkForUpdate(){
   try{
     const d=await(await fetch('/api/update/check',{cache:'no-store'})).json();
-    if(d.update&&d.url){
-      _updUrl=d.url;_updVer=d.latest;
+    if(!d.update)return;
+    _updUrl=d.url;_updVer=d.latest;_updPage=d.page;
+    if(d.platform==='darwin'){
+      // macOS: no silent self-replace — open the download page in the browser
+      _updBar('🔄',`Update v${d.latest} is available`,false,'⬇ Get update','install');
+      const btn=document.getElementById('upd-btn');
+      btn.onclick=()=>{fetch('/api/open?url='+encodeURIComponent(_updPage||_updUrl)).catch(()=>{});toast('Opening the download page…');};
+    }else if(d.url){
+      // Windows: fully automatic download + install + relaunch
       _updBar('⬇',`Downloading update v${d.latest}…`,true,null,null);
       _autoDownload();
     }

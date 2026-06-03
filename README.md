@@ -1,7 +1,27 @@
 # NEXRAD Radar — Desktop App
 
 A live NEXRAD weather-radar viewer for every WSR-88D site in the U.S. — Level II & Level III
-data, every product, RadarScope-style UI. Runs as a **native Windows desktop app**.
+data, every product, RadarScope-style UI. Runs as a native desktop app on **Windows and macOS**.
+
+Download the latest installer (Windows `.exe` or macOS `.dmg`) from
+[**Releases**](https://github.com/pdidygaman/nexrad-radar/releases/latest).
+
+## Install (macOS)
+
+1. Download **`NEXRAD-Radar-vX.X.X-mac.dmg`** from Releases and open it.
+2. Drag **NEXRAD Radar** into your **Applications** folder.
+3. The app isn't signed with an Apple Developer certificate, so the first launch needs a
+   one-time bypass: **right-click (or Control-click) the app → Open → Open**. After that it
+   opens normally by double-click.
+   - If macOS says *"NEXRAD Radar is damaged"*, open Terminal and run:
+     `xattr -cr "/Applications/NEXRAD Radar.app"` then open it again.
+4. Updates: the app checks GitHub on launch and shows a banner when a new version is out —
+   click **Get update** to open the download page, then install the new `.dmg`.
+
+> macOS notes: the **DOW auto-locate** (which reads town labels off the plot) is Windows-only
+> for now — on Mac the DOW viewer still works, it just shows a regional view instead of
+> auto-flying to the truck. Everything else (NEXRAD, TDWR, OU research radars, warnings,
+> outlooks, alerts sidebar, read-aloud) works the same.
 
 ## Install (Windows 10 & 11)
 
