@@ -8,7 +8,10 @@ Download the latest installer (Windows `.exe` or macOS `.dmg`) from
 
 ## Install (macOS)
 
-1. Download **`NEXRAD-Radar-vX.X.X-mac.dmg`** from Releases and open it.
+1. Download the `.dmg` that matches your Mac from Releases and open it:
+   - **Apple Silicon** (M1/M2/M3/M4): `NEXRAD-Radar-vX.X.X-mac-appleSilicon.dmg`
+   - **Intel**: `NEXRAD-Radar-vX.X.X-mac-intel.dmg`
+   - (Check via  → About This Mac: "Chip: Apple M…" vs "Processor: Intel…")
 2. Drag **NEXRAD Radar** into your **Applications** folder.
 3. The app isn't signed with an Apple Developer certificate, so the first launch needs a
    one-time bypass: **right-click (or Control-click) the app → Open → Open**. After that it

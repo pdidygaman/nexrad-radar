@@ -117,12 +117,22 @@ jobs:
           prerelease: false
 
   # ════════════════════════════════════════════════════════════════════
-  # macOS build — produces a .dmg. Runs after the Windows job so the
-  # release already exists; this job just appends the .dmg to it.
+  # macOS build — produces a .dmg for BOTH Apple Silicon and Intel Macs.
+  # macos-14 = Apple Silicon (arm64), macos-13 = Intel (x86_64). An arm64-only
+  # app shows "not supported" on Intel Macs, so we ship one of each.
+  # Runs after the Windows job so the release already exists.
   # ════════════════════════════════════════════════════════════════════
   build-macos:
-    runs-on: macos-latest
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14   # Apple Silicon (M1/M2/M3/M4)
+            arch: appleSilicon
+          - runner: macos-13   # Intel
+            arch: intel
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -175,9 +185,11 @@ jobs:
           mkdir -p dmgroot
           cp -R "$APP" dmgroot/
           ln -s /Applications dmgroot/Applications
-          DMG="NEXRAD-Radar-v${VERSION}-mac.dmg"
+          DMG="NEXRAD-Radar-v${VERSION}-mac-${{ matrix.arch }}.dmg"
           hdiutil create -volname "NEXRAD Radar" -srcfolder dmgroot -ov -format UDZO "$DMG"
           echo "DMG=$DMG" >> "$GITHUB_ENV"
+          echo "Built for ${{ matrix.arch }}: $DMG"
+          file "$APP/Contents/MacOS/NEXRAD Radar" || true
           ls -la "$DMG"
 
       - name: Upload .dmg to release
