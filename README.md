@@ -8,15 +8,16 @@ Download the latest installer (Windows `.exe` or macOS `.dmg`) from
 
 ## Install (macOS)
 
-1. Download the `.dmg` that matches your Mac from Releases and open it:
-   - **Apple Silicon** (M1/M2/M3/M4): `NEXRAD-Radar-vX.X.X-mac-appleSilicon.dmg`
-   - **Intel**: `NEXRAD-Radar-vX.X.X-mac-intel.dmg`
-   - (Check via  → About This Mac: "Chip: Apple M…" vs "Processor: Intel…")
+One `.dmg` works on **every Mac** — both Apple Silicon (M1/M2/M3/M4) and Intel. It's an
+x86_64 build, so Intel Macs run it natively and Apple Silicon Macs run it through Rosetta
+(macOS will offer a one-time "Install Rosetta" prompt on first launch — just click Install).
+
+1. Download **`NEXRAD-Radar-vX.X.X-mac.dmg`** from Releases and open it.
 2. Drag **NEXRAD Radar** into your **Applications** folder.
 3. The app isn't signed with an Apple Developer certificate, so the first launch needs a
    one-time bypass: **right-click (or Control-click) the app → Open → Open**. After that it
    opens normally by double-click.
-   - If macOS says *"NEXRAD Radar is damaged"*, open Terminal and run:
+   - If macOS says *"NEXRAD Radar is damaged"* or *"not supported"*, open Terminal and run:
      `xattr -cr "/Applications/NEXRAD Radar.app"` then open it again.
 4. Updates: the app checks GitHub on launch and shows a banner when a new version is out —
    click **Get update** to open the download page, then install the new `.dmg`.
